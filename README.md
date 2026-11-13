@@ -1,4 +1,28 @@
-# Piano AR
+# Sintetitzador AR
+
+Instrument electrònic que es toca **movent les mans a l'aire davant la càmera** (qualsevol mòbil o ordinador amb càmera). El so es visualitza com a ones de neó que vibren entre els dits.
+
+## Com es toca
+
+| Mà | Moviment | Efecte |
+|---|---|---|
+| **Esquerra · acords** | Amunt / avall | Canvia d'acord dins la progressió de l'escala |
+| | Separar cada dit del polze | Fa sonar cada nota de l'acord (índex = fonamental, cor = 3a, anular = 5a, petit = 7a) |
+| | Esquerra / dreta | Brillantor del pad |
+| **Dreta · melodia** | Amunt / avall | Nota (pentatònica de 2 octaves, amb lliscament) |
+| | Obrir polze-índex | Volum |
+| | Esquerra / dreta | Filtre (fosc → brillant) |
+| | Obrir tots els dits | Eco i ressonància |
+
+Tot està quantitzat a l'escala triada (La menor, Do major, Re dòrica, Fa lidi), de manera que sempre sona harmònic. Hi ha tres sons: *Supersaw*, *Vidre* i *Analògic*.
+
+**Visuals:** vídeo enfosquit, cordes de neó amb lluentor i rastre entre polze i dits (acords), l'ona real del so entre els dits (melodia), oscil·loscopi circular al palmell, partícules, ones expansives en canviar de nota/acord i espectre de freqüències.
+
+Fitxers: `index.html` + `sinte.js`. Es carrega MediaPipe Hands des de CDN.
+
+---
+
+# Piano AR (`piano.html`)
 
 Web app que fa servir **WebXR** per col·locar un piano virtual (2 octaves, mida real) sobre una taula i tocar-lo en realitat augmentada.
 

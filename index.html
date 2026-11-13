@@ -3,55 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#121318">
-  <title>Piano AR</title>
-  <link rel="stylesheet" href="style.css?v=3">
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-      }
-    }
-  </script>
+  <meta name="theme-color" content="#07060f">
+  <title>Sintetitzador AR</title>
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
-<body>
-  <!-- Pantalla d'inici -->
+<body class="sinte">
   <div id="intro">
     <div class="card">
-      <div class="logo" aria-hidden="true">
-        <span></span><span class="b"></span><span></span><span class="b"></span><span></span><span></span><span class="b"></span><span></span>
+      <div class="wave-logo" aria-hidden="true">
+        <svg viewBox="0 0 200 60" preserveAspectRatio="none">
+          <path d="M0 30 C 20 0, 30 0, 50 30 S 80 60, 100 30 S 130 0, 150 30 S 180 60, 200 30" />
+          <path d="M0 30 C 15 10, 35 50, 50 30 S 85 10, 100 30 S 135 50, 150 30 S 185 10, 200 30" />
+        </svg>
       </div>
-      <h1>Piano AR</h1>
-      <p>Col·loca un piano virtual sobre qualsevol taula i toca'l en realitat augmentada.</p>
+      <h1>Sintetitzador AR</h1>
+      <p>Toca un sintetitzador movent les mans a l'aire davant la càmera. El so vibra entre els teus dits.</p>
       <ol>
-        <li>Apunta la càmera a una superfície plana i mou el mòbil lentament.</li>
-        <li>Quan aparegui el cercle, toca la pantalla per col·locar el piano.</li>
-        <li>Toca les tecles amb el dit (mòbil) o amb les mans (Meta Quest).</li>
+        <li>Posa el mòbil (o el portàtil) dret davant teu, a un braç de distància.</li>
+        <li><b>Mà esquerra · acords:</b> amunt/avall canvia d'acord. Separa cada dit del polze per fer sonar cada nota de l'acord.</li>
+        <li><b>Mà dreta · melodia:</b> amunt/avall tria la nota. Obre el polze i l'índex per sonar més fort. Mou-la cap als costats per canviar la brillantor i obre tots els dits per afegir eco.</li>
       </ol>
-      <button id="btn-ar" class="primary">Iniciar AR</button>
-      <a class="secondary hands" href="mans.html?v=3">Tocar amb els dits a la taula (càmera)</a>
-      <button id="btn-3d" class="secondary">Provar en mode 3D (sense AR)</button>
-      <p id="support" class="support">Comprovant compatibilitat…</p>
-      <p class="version">Versió 3</p>
+      <button id="btn-start" class="primary">Començar</button>
+      <a class="secondary" href="piano.html?v=4">Piano AR</a>
+      <p id="status" class="support"></p>
+      <p class="version">Versió 4 · Fes servir auriculars per a un so millor</p>
     </div>
   </div>
 
-  <!-- Capa d'interfície (DOM overlay en AR) -->
+  <canvas id="view"></canvas>
+  <video id="video" playsinline muted autoplay></video>
+
   <div id="overlay" hidden>
-    <div id="hint">Busca una superfície plana…</div>
+    <div id="hint">Carregant…</div>
     <div id="controls">
-      <div class="group">
-        <button id="btn-octave-down" aria-label="Baixar octava">−</button>
-        <span id="octave-label">Do4–Do6</span>
-        <button id="btn-octave-up" aria-label="Pujar octava">+</button>
-      </div>
-      <button id="btn-size">Mida ×1</button>
-      <button id="btn-place" class="ar-only">Recol·locar</button>
+      <button id="btn-key">Escala: La menor</button>
+      <button id="btn-preset">So: Supersaw</button>
+      <button id="btn-guides" class="active">Guies</button>
+      <button id="btn-camera">Càmera</button>
       <button id="btn-exit">Sortir</button>
     </div>
   </div>
 
-  <script type="module" src="main.js?v=3"></script>
+  <script type="module" src="sinte.js?v=4"></script>
 </body>
 </html>

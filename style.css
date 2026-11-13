@@ -191,3 +191,16 @@ a.secondary.hands { background: #2f3a5c; }
 #controls button.active { background: var(--accent); }
 
 .version { font-size: 11px; text-align: center; opacity: .5; margin: 10px 0 0 !important; }
+
+/* ---------- Sintetitzador AR ---------- */
+body.sinte { background: #07060f; }
+body.sinte #intro { background: radial-gradient(circle at 30% 15%, #2a1748 0%, #07060f 65%); }
+body.sinte .card { background: rgba(20, 16, 36, .92); border: 1px solid rgba(160, 120, 255, .18); }
+body.sinte .primary { background: linear-gradient(90deg, #7b3cff, #ff3ca6); }
+.wave-logo { height: 54px; margin-bottom: 12px; }
+.wave-logo svg { width: 100%; height: 100%; overflow: visible; }
+.wave-logo path { fill: none; stroke-width: 3; stroke-linecap: round; }
+.wave-logo path:first-child { stroke: #39e1ff; filter: drop-shadow(0 0 6px #39e1ff); }
+.wave-logo path:last-child { stroke: #ff3ca6; filter: drop-shadow(0 0 6px #ff3ca6); opacity: .85; }
+body.sinte #hint { transition: opacity .4s; }
+body.sinte #hint.gone { opacity: 0; }
