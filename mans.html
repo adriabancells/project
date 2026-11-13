@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ca">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#121318">
+  <title>Piano a la Taula</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="intro">
+    <div class="card">
+      <h1>Piano a la taula</h1>
+      <p>Toca un piano virtual picant la taula de veritat amb els dits. La càmera del mòbil et detecta les mans.</p>
+      <ol>
+        <li>Posa el mòbil <b>en horitzontal</b> i <b>dret sobre la taula</b> (recolzat en alguna cosa), a uns 40–50 cm davant teu i amb la pantalla mirant-te, com un portàtil.</li>
+        <li>Prem <b>Començar</b> i dona permís a la càmera.</li>
+        <li>Arrossega les 4 cantonades perquè el piano quedi on vols de la taula i prem <b>Fet</b>.</li>
+        <li>Pica la taula amb la punta dels dits sobre les tecles. Mantén el dit avall per allargar la nota.</li>
+      </ol>
+      <button id="btn-start" class="primary">Començar</button>
+      <a class="secondary" href="index.html">Tornar</a>
+      <p id="status" class="support"></p>
+    </div>
+  </div>
+
+  <canvas id="view"></canvas>
+  <video id="video" playsinline muted autoplay></video>
+
+  <div id="overlay" hidden>
+    <div id="hint">Carregant…</div>
+    <div id="controls">
+      <div class="group">
+        <button id="btn-octave-down" aria-label="Baixar octava">−</button>
+        <span id="octave-label">Do4–Do6</span>
+        <button id="btn-octave-up" aria-label="Pujar octava">+</button>
+      </div>
+      <button id="btn-adjust">Ajustar</button>
+      <button id="btn-sens">Sensibilitat: mitjana</button>
+      <button id="btn-camera">Canviar càmera</button>
+      <button id="btn-exit">Sortir</button>
+    </div>
+  </div>
+
+  <script type="module" src="mans.js"></script>
+</body>
+</html>
