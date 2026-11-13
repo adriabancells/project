@@ -1,4 +1,4 @@
-import { PianoSynth } from './synth.js';
+import { PianoSynth } from './synth.js?v=3';
 
 const MP_VERSION = '0.10.14';
 const MP_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;

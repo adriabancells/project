@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { PianoSynth } from './synth.js';
+import { PianoSynth } from './synth.js?v=3';
 
 const $ = (id) => document.getElementById(id);
 const intro = $('intro');

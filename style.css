@@ -189,3 +189,5 @@ a.secondary.hands { background: #2f3a5c; }
   pointer-events: none;
 }
 #controls button.active { background: var(--accent); }
+
+.version { font-size: 11px; text-align: center; opacity: .5; margin: 10px 0 0 !important; }
