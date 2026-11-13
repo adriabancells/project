@@ -1,4 +1,4 @@
-import { PianoSynth } from './synth.js?v=4';
+import { PianoSynth } from './synth.js?v=5';
 
 const MP_VERSION = '0.10.14';
 const MP_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;
@@ -469,7 +469,7 @@ btnCamera.addEventListener('click', async () => {
 btnExit.addEventListener('click', () => {
   releaseAll();
   stream?.getTracks().forEach((t) => t.stop());
-  location.href = 'piano.html?v=4';
+  location.href = 'piano.html?v=5';
 });
 
 /* ---------------------------------------------------------------------

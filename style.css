@@ -204,3 +204,8 @@ body.sinte .primary { background: linear-gradient(90deg, #7b3cff, #ff3ca6); }
 .wave-logo path:last-child { stroke: #ff3ca6; filter: drop-shadow(0 0 6px #ff3ca6); opacity: .85; }
 body.sinte #hint { transition: opacity .4s; }
 body.sinte #hint.gone { opacity: 0; }
+
+/* ---------- Gos de festa ---------- */
+body.gos #intro { background: radial-gradient(circle at 30% 15%, #4a1740 0%, #120a1f 65%); }
+body.gos .primary { background: linear-gradient(90deg, #ff3c9e, #ffb03c); }
+.dog-logo { font-size: 44px; text-align: center; margin-bottom: 8px; letter-spacing: 6px; }

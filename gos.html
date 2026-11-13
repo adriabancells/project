@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ca">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#120a1f">
+  <title>Gos de Festa</title>
+  <link rel="stylesheet" href="style.css?v=5">
+</head>
+<body class="sinte gos">
+  <div id="intro">
+    <div class="card">
+      <div class="dog-logo" aria-hidden="true">🐶🎉😎</div>
+      <h1>Gos de festa</h1>
+      <p>Apunta la càmera a un gos: li posarem un barret de festa i ulleres de sol, i la música seguirà els seus moviments.</p>
+      <ol>
+        <li>Prem <b>Començar</b> i apunta la càmera posterior al gos.</li>
+        <li>Com més es mogui, més ràpida i animada serà la música. L'alçada del cap tria les notes de la melodia.</li>
+        <li>Si salta… sorpresa! 🎊</li>
+        <li>Si el barret no queda ben posat, <b>toca el cap del gos</b> a la pantalla.</li>
+      </ol>
+      <button id="btn-start" class="primary">Començar</button>
+      <a class="secondary" href="index.html?v=5">← Sintetitzador AR</a>
+      <p id="status" class="support"></p>
+      <p class="version">Versió 5</p>
+    </div>
+  </div>
+
+  <canvas id="view"></canvas>
+  <video id="video" playsinline muted autoplay></video>
+
+  <div id="overlay" hidden>
+    <div id="hint">Carregant…</div>
+    <div id="controls">
+      <button id="btn-photo">📸 Foto</button>
+      <button id="btn-size">Mida ×1</button>
+      <button id="btn-auto">Cap: auto</button>
+      <button id="btn-music" class="active">Música</button>
+      <button id="btn-camera">Càmera</button>
+      <button id="btn-exit">Sortir</button>
+    </div>
+  </div>
+
+  <script type="module" src="gos.js?v=5"></script>
+</body>
+</html>

@@ -22,6 +22,20 @@ Fitxers: `index.html` + `sinte.js`. Es carrega MediaPipe Hands des de CDN.
 
 ---
 
+# Gos de festa (`gos.html`)
+
+Apunta la càmera a un gos: el detecta (MediaPipe Object Detector, categoria *dog*), li posa un **barret de festa** i **ulleres de sol**, i genera música electrònica alegre (Do–Lam–Fa–Sol) que segueix el seu moviment:
+
+- **Energia del moviment** → tempo (92–142 BPM) i instruments: pad i baix quan està quiet; caixa, charles i melodia més densa quan es mou.
+- **Alçada del cap** → notes de la melodia, tocada amb un so sintetitzat de "bup!" de gos (sempre dins l'escala pentatònica, i als temps forts nota de l'acord).
+- **Salt** → "boing!" i explosió de confeti. Quan apareix el gos sona una fanfàrria.
+- El barret bota al ritme; surten notes ♪ del cap.
+- Botons: 📸 foto (compartir/descarregar), mida dels accessoris, cap auto/manual, música on/off, càmera.
+
+Limitació: no hi ha cap model públic al navegador amb punts de la cara dels gossos, així que la posició del cap s'estima a partir de la silueta. Si no encaixa, **toca el cap del gos** i els accessoris s'hi queden enganxats.
+
+---
+
 # Piano AR (`piano.html`)
 
 Web app que fa servir **WebXR** per col·locar un piano virtual (2 octaves, mida real) sobre una taula i tocar-lo en realitat augmentada.
