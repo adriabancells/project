@@ -1,3 +1,17 @@
+# Atrapado (`habitacion.html`)
+
+Un pequeño humano minimalista vive **dentro de la pantalla del móvil**. La pantalla es el cristal de una habitación que se ve desde arriba, con profundidad 3D real: sofá, sillas, mesa, lámpara, estantería y plantas.
+
+- **Inclinación del móvil** → todo resbala: los muebles (cada uno con su peso y rozamiento), y el humano primero se inclina para compensar, luego tropieza y al final se cae. Al sacudir el móvil, todo salta. El botón *Nivelar* fija la posición actual como "plana".
+- **Seguimiento de ojos** (cámara frontal + MediaPipe Face Landmarker): se estima la posición de tus ojos (incluida la distancia, a partir de la separación de las pupilas) y se usa una **proyección off-axis**, de modo que la pantalla se comporta como una ventana real. Botón *3D* para exagerar el efecto (×1, ×1.6, ×2.4). Sin cámara, la perspectiva sigue la inclinación.
+- **Con el dedo**: tocar al humano = cosquillas (si insistes se enfada y huye); mantener = cogerlo, y al soltar lo **lanzas** (puede chocar con las paredes… o con tu pantalla). Arrastrar muebles, doble toque para girarlos, tocar la lámpara para encenderla. Tocar el suelo: va allí. Mantener el dedo en el suelo: viene a tocarlo.
+- **Vida propia**: pasea, se sienta en sillas y sofá, se echa la siesta, enciende la lámpara, intenta abrir la puerta (cerrada), y si te ve te saluda o te pide que lo saques de allí.
+- Sonido sintetizado con Web Audio (voz tipo "bla-bla", golpes, clics).
+
+Funciona en iPhone (Safari pide permiso para el movimiento y la cámara) y Android. En el ordenador: flechas para inclinar, ratón para la perspectiva. Fitxers: `habitacion.html` + `habitacion.js` (Three.js y MediaPipe des de CDN). Cal HTTPS per a la càmera i els sensors.
+
+---
+
 # Sintetitzador AR
 
 Instrument electrònic que es toca **movent les mans a l'aire davant la càmera** (qualsevol mòbil o ordinador amb càmera). El so es visualitza com a ones de neó que vibren entre els dits.

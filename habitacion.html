@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#ebe4da">
+  <title>Atrapado</title>
+  <style>
+    :root { --ink: #3a332d; --muted: #8a8077; --paper: #f6f2ec; --accent: #d9826b; }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%; overflow: hidden; background: #ebe4da; color: var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      -webkit-tap-highlight-color: transparent; touch-action: none;
+      -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    }
+    canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
+    canvas.shake { animation: shake .28s linear; }
+    @keyframes shake {
+      0%,100% { transform: translate(0,0); } 20% { transform: translate(-3px,2px); }
+      40% { transform: translate(3px,-2px); } 60% { transform: translate(-2px,-1px); } 80% { transform: translate(2px,1px); }
+    }
+
+    #intro {
+      position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+      padding: 16px; background: radial-gradient(circle at 50% 30%, #fbf8f3 0%, #e7dfd3 75%); overflow-y: auto;
+    }
+    #intro[hidden] { display: none; }
+    .card { width: 100%; max-width: 380px; text-align: center; }
+    .logo { width: 120px; height: 150px; margin: 0 auto 18px; position: relative; border-radius: 22px;
+      background: linear-gradient(#f3eee7, #e2d8ca); box-shadow: inset 0 0 0 10px #f7f3ee, inset 0 0 18px 10px rgba(0,0,0,.08), 0 14px 40px rgba(80,60,40,.18); }
+    .logo i { position: absolute; left: 50%; top: 52%; width: 22px; height: 22px; margin: -11px; border-radius: 50%;
+      background: #fff; box-shadow: 3px 5px 0 rgba(0,0,0,.08); animation: bob 2.4s ease-in-out infinite; }
+    .logo i::before, .logo i::after { content: ""; position: absolute; top: 9px; width: 3px; height: 3px; border-radius: 50%; background: var(--ink); }
+    .logo i::before { left: 6px; } .logo i::after { right: 6px; }
+    @keyframes bob { 0%,100% { transform: translate(-14px, 6px); } 50% { transform: translate(14px, -8px); } }
+    h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -.5px; }
+    .card p { margin: 0 0 14px; color: var(--muted); line-height: 1.45; font-size: 15px; }
+    .card ul { text-align: left; margin: 0 auto 22px; padding: 0 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.55; max-width: 320px; }
+    .card b { color: var(--ink); font-weight: 600; }
+    button { font: inherit; cursor: pointer; }
+    .primary, .secondary { display: block; width: 100%; max-width: 320px; margin: 0 auto 10px; padding: 14px 18px; border-radius: 14px; border: 0; font-size: 16px; font-weight: 600; }
+    .primary { background: var(--ink); color: #fff; }
+    .secondary { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px rgba(58,51,45,.25); }
+    .back { display: inline-block; margin-top: 8px; color: var(--muted); font-size: 13px; }
+    #status { min-height: 1.2em; font-size: 13px; color: var(--accent); margin-top: 8px; }
+
+    #hud { position: fixed; z-index: 5; top: max(10px, env(safe-area-inset-top)); left: 0; right: 0; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
+    #hud[hidden] { display: none; }
+    #hud button { pointer-events: auto; border: 0; border-radius: 999px; padding: 7px 11px; font-size: 12px; font-weight: 600; color: var(--ink);
+      background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    #hud button.on { background: rgba(58,51,45,.85); color: #fff; }
+    #hud .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #b9afa5; margin-right: 5px; vertical-align: 1px; }
+    #hud .dot.track { background: #59c27a; box-shadow: 0 0 6px #59c27a; }
+    #hud .dot.load { background: #e5b14a; }
+
+    #bubble { position: fixed; z-index: 4; left: 0; top: 0; padding: 6px 10px; border-radius: 12px; background: #fff; color: var(--ink);
+      font-size: 13px; font-weight: 700; white-space: nowrap; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,.12);
+      opacity: 0; transition: opacity .18s; will-change: transform; }
+    #bubble::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 10px; height: 10px; margin-left: -5px; background: #fff; transform: rotate(45deg); border-radius: 2px; }
+    #bubble.show { opacity: 1; }
+
+    .ripple { position: fixed; z-index: 3; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; pointer-events: none;
+      border: 2px solid rgba(58,51,45,.35); animation: ripple .55s ease-out forwards; }
+    @keyframes ripple { from { transform: scale(.2); opacity: 1; } to { transform: scale(1); opacity: 0; } }
+
+    #tip { position: fixed; z-index: 5; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: calc(100% - 32px); max-width: 360px;
+      padding: 10px 14px; border-radius: 14px; background: rgba(255,255,255,.7); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+      font-size: 13px; line-height: 1.45; color: var(--ink); text-align: center; pointer-events: none; transition: opacity .8s; }
+    #tip.hide { opacity: 0; }
+
+    #cam { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: 0; top: 0; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="bubble"></div>
+  <video id="cam" playsinline muted></video>
+
+  <div id="hud" hidden>
+    <button id="btn-eyes"><span class="dot" id="eye-dot"></span>Ojos</button>
+    <button id="btn-level">Nivelar</button>
+    <button id="btn-depth">3D ×1.6</button>
+    <button id="btn-sound" class="on">Sonido</button>
+  </div>
+  <div id="tip" class="hide"></div>
+
+  <div id="intro">
+    <div class="card">
+      <div class="logo" aria-hidden="true"><i></i></div>
+      <h1>Atrapado</h1>
+      <p>Alguien vive dentro de tu móvil. Su habitación está justo debajo del cristal.</p>
+      <ul>
+        <li><b>Inclina</b> el móvil: todo resbala por la habitación.</li>
+        <li><b>Toca</b> al humano para hacerle cosquillas; <b>mantén</b> para cogerlo y <b>lánzalo</b>.</li>
+        <li><b>Arrastra</b> los muebles. Doble toque los gira. Toca la lámpara.</li>
+        <li>Toca el suelo y irá allí. Mantén el dedo y vendrá a tocarlo.</li>
+        <li>La <b>cámara frontal</b> sigue tus ojos para que la profundidad cambie según miras.</li>
+      </ul>
+      <button id="btn-start" class="primary">Entrar con cámara 3D</button>
+      <button id="btn-start-nocam" class="secondary">Entrar sin cámara</button>
+      <p id="status"></p>
+      <p style="font-size:12px">La imagen de la cámara se procesa solo en tu móvil; no se envía a ningún sitio.</p>
+      <a class="back" href="index.html">← Otros experimentos</a>
+    </div>
+  </div>
+
+  <script type="module" src="habitacion.js?v=1"></script>
+</body>
+</html>
