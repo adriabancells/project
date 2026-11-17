@@ -8,7 +8,7 @@ Un pequeño humano minimalista vive **dentro de la pantalla del móvil**. La pan
 - **Vida propia**: pasea, se sienta en sillas y sofá, se echa la siesta, enciende la lámpara, intenta abrir la puerta (cerrada), y si te ve te saluda o te pide que lo saques de allí.
 - Sonido sintetizado con Web Audio (voz tipo "bla-bla", golpes, clics).
 
-Funciona en iPhone (Safari pide permiso para el movimiento y la cámara) y Android. En el ordenador: flechas para inclinar, ratón para la perspectiva. Fitxers: `habitacion.html` + `habitacion.js` (Three.js y MediaPipe des de CDN). Cal HTTPS per a la càmera i els sensors.
+Funciona en iPhone (Safari pide permiso para el movimiento y la cámara) y Android. En el ordenador: flechas para inclinar, ratón para la perspectiva. Ficheros: `habitacion.html` + `habitacion.js` (Three.js y MediaPipe desde CDN). Hace falta HTTPS para la cámara y los sensores.
 
 ---
 
