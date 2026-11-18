@@ -103,6 +103,37 @@
     .petrow .pl { font-size: 12px; }
     .petrow .bar { height: 9px; background: var(--lo); border: 2px solid #000; position: relative; }
     .petrow .bar b { position: absolute; left: 0; top: 0; bottom: 0; width: 50%; background: #5fd35f; }
+    #clipbar { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; padding-bottom: 5px; border-bottom: 2px solid var(--lo); font-size: 19px; line-height: 1; position: relative; flex-wrap: wrap; }
+    #clipbar .rbtn { font-size: 18px; padding: 4px 8px; }
+    #clipbar .cbi { white-space: nowrap; }
+    #clipbar .cbi b { font-weight: normal; color: var(--gold); }
+    #clipbar .goalbar { position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; background: transparent; }
+    #clipbar .goalbar b { display: block; height: 100%; width: 0; background: var(--gold); }
+    .fstats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .fstats div { background: #22304f; border: 2px solid var(--lo); padding: 5px 6px; }
+    .fstats b { display: block; font-weight: normal; font-size: 24px; color: var(--gold); line-height: 1; }
+    .fstats small { font-size: 15px; color: #b9c4e0; }
+    .fnote { margin: 0; font-size: 16px; line-height: 1.1; color: #b9c4e0; }
+    .fsec { font-size: 19px; color: var(--gold); margin-top: 4px; }
+    .frow { display: flex; flex-wrap: wrap; gap: 4px; }
+    .frow button { flex: 1; font-family: var(--font); font-size: 18px; padding: 6px 6px; color: var(--text); background: var(--panel2); border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
+    .frow button:disabled { opacity: .4; }
+    .mile { display: flex; flex-direction: column; gap: 3px; padding: 4px 6px; background: #22304f; border: 2px solid var(--lo); font-size: 18px; line-height: 1; }
+    .mile small { display: block; font-size: 15px; color: #b9c4e0; margin-top: 2px; }
+    .mile.done { color: #9ff09f; opacity: .8; }
+    .mile .bar { height: 8px; background: var(--lo); border: 2px solid #000; position: relative; }
+    .mile .bar b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--gold); }
+    .floaty { position: fixed; z-index: 4; transform: translate(-50%, -100%); font-size: 18px; color: var(--gold); text-shadow: 2px 2px 0 #000; pointer-events: none; white-space: nowrap; animation: floaty 1.3s steps(8) forwards; }
+    @keyframes floaty { from { opacity: 1; margin-top: 0; } to { opacity: 0; margin-top: -36px; } }
+    .stars { text-align: center; font-size: 48px; color: var(--gold); text-shadow: 3px 3px 0 #000; }
+    #win-body p { margin: 0; font-size: 19px; line-height: 1.15; }
+    #rotate { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; background: #1d2b4a; }
+    #rotate[hidden] { display: none; }
+    #rotate p { margin: 0; font-size: 30px; color: var(--text); }
+    #rotate b { color: var(--gold); font-weight: normal; }
+    #rotate small { font-size: 18px; color: #b9c4e0; max-width: 320px; }
+    #rotate .phone { width: 46px; height: 80px; border: 5px solid var(--gold); border-radius: 8px; animation: turn 2s ease-in-out infinite; }
+    @keyframes turn { 0%, 30% { transform: rotate(-90deg); } 60%, 100% { transform: rotate(0deg); } }
     #actmenu .msub { font-size: 16px; color: #b9c4e0; padding: 0 4px 2px; }
 
     #toast { position: fixed; z-index: 8; left: 50%; top: 64px; transform: translate(-50%, -12px); max-width: calc(100% - 24px); padding: 6px 12px;
@@ -157,7 +188,16 @@
 
   <canvas id="view"></canvas>
 
-  <div id="panel" class="bevel"><div id="needs"></div><div id="pets" hidden></div></div>
+  <div id="panel" class="bevel">
+    <div id="clipbar">
+      <button id="btn-factory" class="rbtn gold">Fábrica</button>
+      <span class="cbi" title="Clips fabricados">📎 <b id="cb-clips">0</b></span>
+      <span class="cbi" title="Producción">⚙ <b id="cb-rate">0/s</b></span>
+      <span class="cbi" title="Alambre">🧵 <b id="cb-wire">0</b></span>
+      <span class="cbi" title="Eficiencia según el ánimo">☺ <b id="cb-eff">0%</b></span>
+      <span class="goalbar"><b id="cb-goal"></b></span>
+    </div>
+    <div id="needs"></div><div id="pets" hidden></div></div>
 
   <div id="actmenu" class="bevel" hidden></div>
   <div id="toast" class="bevel"></div>
@@ -178,6 +218,26 @@
       <div class="pvbox"><canvas id="preview" width="96" height="96"></canvas></div>
       <div class="body" id="wardrobe-body"></div>
     </div>
+  </div>
+
+  <div id="factory" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span>Fábrica de clips · <span id="factory-money">◎ 0</span></span><button id="factory-close">✕</button></div>
+      <div class="body" id="factory-body"></div>
+    </div>
+  </div>
+
+  <div id="win" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span>¡Objetivo cumplido!</span><button id="win-close">✕</button></div>
+      <div class="body" id="win-body"></div>
+    </div>
+  </div>
+
+  <div id="rotate" hidden>
+    <div class="phone"></div>
+    <p>Gira el móvil en <b>vertical</b></p>
+    <small>Este juego solo funciona con el móvil en posición vertical. La partida está en pausa.</small>
   </div>
 
   <div id="settings" class="modal" hidden>
@@ -208,6 +268,8 @@
           <li>Tócalo para hacerle cosquillas; mantén para cogerlo. Inclina el móvil: todo resbala.</li>
           <li>Cámbiale la <b>ropa</b> en el armario y adopta <b>mascotas</b>.</li>
           <li>De vez en cuando <b>llaman a la puerta</b>.</li>
+          <li><b>El objetivo:</b> fabricar <b>10 millones de clips</b>. La fábrica rinde según lo feliz que esté. Vende clips para comprar cosas, pero no descuides a tu humano.</li>
+          <li>Juega con el móvil en <b>vertical</b>.</li>
         </ul>
         <label>Nombre de tu humano<input id="name-input" maxlength="14" placeholder="Nico" autocomplete="off"></label>
         <button id="btn-looks-intro" class="rbtn" style="font-size:19px">Personalizar su aspecto</button>
@@ -220,6 +282,6 @@
     </div>
   </div>
 
-  <script type="module" src="habitacion.js?v=4"></script>
+  <script type="module" src="habitacion.js?v=5"></script>
 </body>
 </html>

@@ -384,7 +384,7 @@ const DEFS = {
     },
     support: (lx, ly) => (ly < -0.004 ? 0.118 : 0.071),
     actions: [
-      { id: 'work', label: 'Trabajar', anim: 'sit', pose: 'type', dur: 14, rates: { fun: -1.3, energy: -0.7, money: 4 }, adv: { money: 1 },
+      { id: 'work', label: 'Trabajar', anim: 'sit', pose: 'type', dur: 14, rates: { fun: -1.3, energy: -0.7, money: 2.5 }, adv: { money: 1 },
         seat: () => ({ lx: 0, ly: 0.038, h: 0.071, face: -HALF_PI }), screen: 'work',
         refuse: (a) => a.needs && (a.mood() < 22 || a.needs.fun < 8 || a.needs.energy < 10) ? pick(['No tengo ganas…', '¡Hoy no!', 'Estoy muy cansado…']) : null },
       { id: 'game', label: 'Jugar a videojuegos', anim: 'sit', pose: 'type', dur: 12, rates: { fun: 5.5, energy: -0.3, social: 0.3 }, adv: { fun: 60 }, visitor: true,
@@ -982,6 +982,161 @@ const SHOP_CATS = [
   { id: 'mascotas', label: 'Mascotas' },
   { id: 'ropa', label: 'Ropa' },
 ];
+/* ---------- Objetos de la fábrica de clips y de lujo ---------- */
+function clipPile(g, x, y, z, n = 10) {
+  const pile = new THREE.Group();
+  pile.position.set(x, y, z);
+  for (let i = 0; i < n; i++) {
+    const c = box(0.012, 0.004, 0.0025, '#c9ced6', rand(-0.012, 0.012), rand(-0.01, 0.01), i * 0.0018);
+    c.rotation.z = rand(0, 3);
+    c.castShadow = false;
+    pile.add(c);
+  }
+  g.add(pile);
+  return pile;
+}
+const steel = '#8a95a3', hazard = '#e3c26a';
+
+Object.assign(DEFS, {
+  clipbench: {
+    name: 'Mesa de clips', icon: '📎', price: 60, cat: 'clips', hx: 0.07, hy: 0.045, mass: 4, mus: 0.45,
+    build() {
+      const g = new THREE.Group();
+      g.add(box(0.14, 0.09, 0.012, C.wood, 0, 0, 0.1));
+      for (const [x, y] of [[-0.062, -0.037], [0.062, -0.037], [-0.062, 0.037], [0.062, 0.037]]) g.add(box(0.01, 0.01, 0.095, C.woodDark, x, y, 0.047));
+      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.006, 5, 10), mat(steel)); coil.position.set(-0.04, -0.012, 0.112); g.add(coil);
+      g.add(box(0.03, 0.006, 0.004, '#c0504a', 0.01, -0.02, 0.108));
+      g.add(box(0.012, 0.004, 0.004, C.metal, 0.03, -0.018, 0.108));
+      g.userData.pile = clipPile(g, 0.035, 0.012, 0.108, 12);
+      return g;
+    },
+    support: () => 0.11,
+    actions: [
+      { id: 'clips', label: 'Hacer clips', anim: 'stand', pose: 'type', dur: 15, rates: { fun: -0.8, energy: -0.5 }, adv: { money: 1 }, exclusive: true,
+        refuse: (a) => (a.needs && (a.mood() < 18 || a.needs.energy < 8) ? pick(['Ahora no puedo ni doblar un clip…', 'Estoy muy cansado…', '¡Hoy no!']) : null),
+        tick(a, dt) { if (a.isHost) manualClips(dt); } },
+    ],
+  },
+  clipper: {
+    name: 'Máquina de clips', icon: '⚙️', price: 120, cat: 'clips', unlockAt: 100, clipRate: 3, noise: 1, hx: 0.045, hy: 0.045, mass: 4, mus: 0.45,
+    build() {
+      const g = new THREE.Group();
+      g.add(box(0.09, 0.09, 0.06, '#6b7a8a', 0, 0, 0.03));
+      g.add(box(0.06, 0.06, 0.05, '#7d8c9c', 0, -0.01, 0.085));
+      g.add(box(0.092, 0.01, 0.012, hazard, 0, 0.041, 0.05));
+      const pist = new THREE.Group(); pist.position.set(0, -0.01, 0.11); g.add(pist);
+      pist.add(cyl(0.008, 0.008, 0.04, steel, 0, 0, 0.02, 8));
+      g.add(box(0.04, 0.03, 0.006, '#4a4650', 0, 0.035, 0.064));
+      g.userData.piston = pist;
+      g.userData.pile = clipPile(g, 0, 0.035, 0.068, 8);
+      g.userData.lamp = new THREE.MeshBasicMaterial({ color: '#5fd35f' });
+      const l = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), g.userData.lamp); l.position.set(0.022, -0.03, 0.115); g.add(l);
+      return g;
+    },
+    support: () => 0.13,
+    actions: [{ id: 'fix', label: 'Revisar la máquina', anim: 'stand', pose: 'wash', dur: 3, rates: { energy: -0.5 }, onEnd(a, int, f) { if (!int) { f.jam = false; a.say('¡Arreglada!', 1.2); } } }],
+  },
+  industrial: {
+    name: 'Máquina industrial', icon: '🏭', price: 1500, cat: 'clips', unlockAt: 25000, clipRate: 25, noise: 3, hx: 0.085, hy: 0.06, mass: 12, mus: 0.6,
+    build() {
+      const g = new THREE.Group();
+      g.add(box(0.17, 0.12, 0.08, '#5a6a7a', 0, 0, 0.04));
+      g.add(box(0.06, 0.08, 0.08, '#6b7a8a', -0.05, -0.01, 0.12));
+      const belt = texMat(BELT, 3, 1);
+      g.add(box(0.11, 0.035, 0.006, belt, 0.025, 0.035, 0.083));
+      g.userData.belt = belt.map;
+      const pist = new THREE.Group(); pist.position.set(0.03, 0.035, 0.13); g.add(pist);
+      pist.add(box(0.03, 0.025, 0.04, steel, 0, 0, 0));
+      g.userData.piston = pist;
+      g.add(cyl(0.012, 0.014, 0.08, '#4a4650', -0.06, -0.035, 0.2, 8));
+      g.add(box(0.172, 0.012, 0.012, hazard, 0, 0.057, 0.06));
+      g.userData.pile = clipPile(g, 0.07, 0.035, 0.085, 14);
+      g.userData.lamp = new THREE.MeshBasicMaterial({ color: '#5fd35f' });
+      const l = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.012, 0.012), g.userData.lamp); l.position.set(-0.03, 0.03, 0.165); g.add(l);
+      return g;
+    },
+    support: () => 0.16,
+    actions: [{ id: 'fix', label: 'Revisar la máquina', anim: 'stand', pose: 'wash', dur: 4, rates: { energy: -0.6 }, onEnd(a, int, f) { if (!int) { f.jam = false; a.say('¡Arreglada!', 1.2); } } }],
+  },
+  robot: {
+    name: 'Robot clipero', icon: '🤖', price: 20000, cat: 'clips', unlockAt: 500000, clipRate: 160, noise: 4, hx: 0.06, hy: 0.06, mass: 10, mus: 0.6,
+    build() {
+      const g = new THREE.Group();
+      g.add(cyl(0.05, 0.055, 0.03, '#3a3540', 0, 0, 0.015, 10));
+      const arm = new THREE.Group(); arm.position.set(0, 0, 0.03); g.add(arm);
+      arm.add(cyl(0.022, 0.026, 0.03, hazard, 0, 0, 0.015, 8));
+      const up = new THREE.Group(); up.position.set(0, 0, 0.03); arm.add(up);
+      up.add(box(0.016, 0.016, 0.1, '#e8e2d2', 0, 0, 0.05));
+      const fore = new THREE.Group(); fore.position.set(0, 0, 0.1); up.add(fore);
+      fore.add(box(0.07, 0.014, 0.014, '#e8e2d2', 0.035, 0, 0));
+      fore.add(box(0.012, 0.02, 0.02, '#c0504a', 0.072, 0, -0.008));
+      g.userData.arm = arm; g.userData.up = up; g.userData.fore = fore;
+      g.userData.pile = clipPile(g, 0.0, 0.045, 0.03, 14);
+      g.userData.lamp = new THREE.MeshBasicMaterial({ color: '#5fd35f' });
+      const l = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.012, 0.012), g.userData.lamp); l.position.set(0, -0.04, 0.034); g.add(l);
+      return g;
+    },
+    support: () => 0.06,
+    actions: [{ id: 'fix', label: 'Revisar el robot', anim: 'stand', pose: 'wash', dur: 4, rates: { energy: -0.6 }, onEnd(a, int, f) { if (!int) { f.jam = false; a.say('¡Arreglado!', 1.2); } } }],
+  },
+  luxbed: {
+    name: 'Cama de lujo', icon: '👑', price: 3000, cat: 'lujo', hx: 0.12, hy: 0.18, mass: 12, mus: 0.6,
+    build() {
+      const g = new THREE.Group();
+      g.add(box(0.24, 0.36, 0.05, '#e2c14a', 0, 0, 0.035));
+      g.add(box(0.22, 0.33, 0.035, '#fbf8f2', 0, 0.005, 0.075));
+      g.add(box(0.23, 0.2, 0.04, '#7d3f9b', 0, 0.07, 0.082));
+      for (const x of [-0.05, 0.05]) g.add(box(0.08, 0.05, 0.03, '#fbf8f2', x, -0.13, 0.1));
+      g.add(box(0.24, 0.025, 0.17, '#e2c14a', 0, -0.17, 0.085));
+      for (const x of [-0.11, 0.11]) g.add(ball(0.014, '#e2c14a', x, -0.17, 0.18, 0));
+      return g;
+    },
+    support: (lx, ly) => (ly < -0.155 ? 0.17 : 0.1),
+    actions: [
+      { id: 'sleep', label: 'Dormir a lo grande', anim: 'lie', dur: 60, rates: { energy: 8, fun: 0.8 }, adv: { energy: 110 },
+        seat: () => ({ lx: 0, ly: 0.13, h: 0.096, face: HALF_PI }), until: (a) => a.needs && a.needs.energy >= 99.5 && a.act.t > 4 },
+    ],
+  },
+  jacuzzi: {
+    name: 'Jacuzzi', icon: '🫧', price: 4500, cat: 'lujo', hx: 0.1, hy: 0.1, mass: 14, mus: 0.7,
+    build() {
+      const g = new THREE.Group();
+      g.add(cyl(0.1, 0.1, 0.02, '#e8e2d2', 0, 0, 0.01, 12));
+      for (let i = 0; i < 12; i++) { const a = (i / 12) * Math.PI * 2; const b = box(0.05, 0.016, 0.08, '#e8e2d2', Math.cos(a) * 0.092, Math.sin(a) * 0.092, 0.04); b.rotation.z = a + HALF_PI; g.add(b); }
+      const water = new THREE.Mesh(new THREE.CircleGeometry(0.086, 12), new THREE.MeshLambertMaterial({ color: '#6fd0e8', transparent: true, opacity: 0.55, emissive: '#2a8ab0', emissiveIntensity: 0.3 }));
+      water.position.z = 0.062; g.add(water);
+      const bub = new THREE.Group(); g.add(bub);
+      for (let i = 0; i < 10; i++) bub.add(ball(0.006, '#ffffff', rand(-0.06, 0.06), rand(-0.06, 0.06), 0.064, 0));
+      g.userData.bubbles = bub;
+      return g;
+    },
+    support: (lx, ly) => (Math.hypot(lx, ly) < 0.078 ? 0.02 : 0.085),
+    actions: [
+      { id: 'jacuzzi', label: 'Darse un jacuzzi', anim: 'lie', dur: 14, rates: { hygiene: 8, fun: 5, energy: 2.5 }, adv: { hygiene: 70, fun: 70, energy: 20 }, visitor: true,
+        seat: () => ({ lx: 0, ly: 0.07, h: 0.024, face: HALF_PI }) },
+    ],
+  },
+  massage: {
+    name: 'Sillón de masaje', icon: '💆', price: 2500, cat: 'lujo', seatable: true, hx: 0.06, hy: 0.06, mass: 6, mus: 0.5,
+    build() {
+      const g = new THREE.Group(), c = '#3a2a2a';
+      g.add(box(0.12, 0.12, 0.05, c, 0, 0, 0.035));
+      g.add(box(0.09, 0.09, 0.02, '#5a3a3a', 0, 0.01, 0.07));
+      g.add(box(0.12, 0.03, 0.15, c, 0, -0.045, 0.1));
+      for (const x of [-0.05, 0.05]) g.add(box(0.02, 0.11, 0.08, c, x, 0.005, 0.065));
+      g.add(box(0.03, 0.02, 0.012, '#7fd1a8', 0.05, 0.03, 0.108));
+      return g;
+    },
+    support: (lx, ly) => (Math.abs(lx) > 0.04 ? 0.105 : ly < -0.03 ? 0.175 : 0.08),
+    seats: [{ lx: 0, ly: 0.01, h: 0.08 }],
+    actions: [
+      { id: 'massage', label: 'Darse un masaje', anim: 'sit', dur: 12, rates: { energy: 3.2, fun: 3.2 }, adv: { energy: 40, fun: 40 }, visitor: true, seat: 'free', screen: 'massage' },
+    ],
+  },
+});
+DEFS.armchair.cat = 'muebles';
+SHOP_CATS.splice(4, 0, { id: 'lujo', label: 'Lujo' }, { id: 'clips', label: 'Clips' });
+
 
 const ESSENTIAL = new Set(['fridge', 'bed', 'toilet']);
 
@@ -1081,6 +1236,7 @@ function defaultLayout() {
   addFurn('lamp', -W / 2 + 0.24, -H / 2 + 0.04);
   addFurn('plant', W / 2 - 0.045, -H / 2 + 0.045);
   addFurn('wardrobe', W * 0.08, -H / 2 + 0.042);
+  addFurn('clipbench', -W / 2 + 0.047, -H * 0.1, -HALF_PI);
 }
 
 function setLamp(f, on) {
@@ -1988,6 +2144,7 @@ class Agent {
       if (k === 'fun' && sleeping) r *= 0.3;
       if (k === 'social' && sleeping) r *= 0.3;
       if (k === 'fun' || k === 'social') r *= 1 - ambience();
+      if (k === 'fun' || k === 'energy') r *= 1 + noiseLevel();
       n[k] = clamp(n[k] - r * dt, 0, 100);
     }
     if (face.present && !sleeping) this.addNeed('social', 0.45 * dt);
@@ -2045,6 +2202,7 @@ class Agent {
         s /= 1 + Math.hypot(f.x - this.x, f.y - this.y) * 0.6;
         if (f.busy && f.busy !== this) s *= 0.15;
         if (f.type === 'toilet' && n.bladder < 20) s += 2;
+        if (def.id === 'clips') s = clips.wire > 0 ? s + 0.25 * clamp((this.mood() - 40) / 40, 0, 1) : 0;
         options.push({ s: s * rand(0.8, 1.2), f, def });
       }
     }
@@ -2057,6 +2215,7 @@ class Agent {
     for (const f of furn) {
       if (f.type === 'bowl' && !(f.food > 0) && pets.some((pp) => pp.hunger < 60) && money >= 3) options.push({ s: 1.1 / (1 + Math.hypot(f.x - this.x, f.y - this.y) * 0.6), f, def: f.def.actions[0] });
     }
+    for (const f of furn) if (f.jam) options.push({ s: 1.0 / (1 + Math.hypot(f.x - this.x, f.y - this.y) * 0.6), f, def: f.def.actions[0] });
     for (const pd of puddles) options.push({ s: 0.35 + (pd.kind === 'poop' ? 0.15 : 0), puddle: pd });
     const guest = agents.find((o) => o !== this && o.canTalk() && !o.leaving && o.arrived);
     if (guest) options.push({ s: urgency(n.social) * 0.9 + 0.3, talk: guest });
@@ -3079,6 +3238,18 @@ function updateFurnVisuals(dt, t) {
     if (u.pend) u.pend.rotation.y = Math.sin(t * 3) * 0.35;
     if (u.lava) u.lava.emissive.setHSL((t * 0.05) % 1, 0.9, 0.5);
     if (u.food) u.food.visible = f.food > 0;
+    if (f.def.clipRate) {
+      const running = clips.on && !f.jam && clips.wire > 0 && clipEff() > 0;
+      u.lamp.color.set(f.jam ? (Math.sin(t * 12) > 0 ? '#ff3a2a' : '#5a1a1a') : running ? '#5fd35f' : '#6a6a7a');
+      const sp2 = running ? clipEff() : 0;
+      if (u.piston) u.piston.position.z = (f.type === 'clipper' ? 0.11 : 0.13) + Math.abs(Math.sin(t * 9 * sp2)) * 0.012 * (sp2 > 0 ? 1 : 0);
+      if (u.belt && running) u.belt.offset.x = (u.belt.offset.x - dt * 2 * sp2) % 1;
+      if (u.arm && running) { u.arm.rotation.z = Math.sin(t * 2.2) * 1.2; u.up.rotation.y = Math.sin(t * 3.1) * 0.4; u.fore.rotation.y = Math.cos(t * 3.1) * 0.5; }
+      if (f.jam && Math.random() < dt * 3) f.wob = 0.4;
+    }
+    if (u.pile) u.pile.scale.z = clamp(0.4 + Math.log10(1 + clips.stock) / 2, 0.4, 4);
+    if (u.bubbles) u.bubbles.children.forEach((b, i) => { b.position.z = 0.064 + Math.abs(Math.sin(t * 3 + i * 1.7)) * 0.01; });
+    if (f.use === 'massage') f.wob = 0.25;
     if (f.type === 'stereo') { const b = music ? 1 + Math.abs(Math.sin(t * 11)) * 0.08 : 1; f.g.scale.set(sc * b, sc * b, sc * b); }
   }
   return music;
@@ -3553,8 +3724,11 @@ function buildShop() {
     const owned = furn.filter((f) => f.type === type).length;
     item.innerHTML = `<span class="ic">${d.icon}</span><span class="nm">${d.name}${owned ? ` <small>×${owned}</small>` : ''}<small class="ds">${shopDesc(d)}</small></span>`;
     const b = document.createElement('button');
-    b.textContent = `${d.price}◎`;
-    b.disabled = money < d.price;
+    const locked = d.unlockAt && clips.total < d.unlockAt;
+    b.textContent = locked ? '🔒' : `${fmt(d.price)}◎`;
+    b.disabled = locked || money < d.price;
+    if (locked) item.querySelector('.ds').textContent = `Se desbloquea con ${fmt(d.unlockAt)} clips`;
+    else if (d.clipRate) item.querySelector('.ds').textContent = `${d.clipRate} clips/s · ruido ${d.noise}`;
     b.addEventListener('click', () => buy(type));
     item.appendChild(b);
     list.appendChild(item);
@@ -3879,6 +4053,7 @@ function save() {
     items: furn.map((f) => ({ type: f.type, fx: f.x / (W / 2), fy: f.y / (H / 2), rot: f.rot, on: f.on, food: f.food || 0 })),
     outfit: Object.fromEntries(['shirt', 'pants', 'hair', 'hairStyle', 'skin', 'top', 'acc', 'accColor', 'eyes', 'eyeColor', 'brows', 'nose', 'mouth', 'facial', 'cheeks', 'height'].map((k) => [k, host.p[k]])),
     unlocked: [...unlocked],
+    clips: clipsSave(),
     pets: pets.map((p) => ({ kind: p.kind, name: p.name, coat: p.coat, hunger: p.hunger, love: p.love, energy: p.energy, fx: p.x / (W / 2), fy: p.y / (H / 2) })),
   };
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch { /* sin almacenamiento */ }
@@ -3888,9 +4063,289 @@ function loadSave() {
 }
 
 /* =====================================================================
+ *  Fábrica de clips (juego incremental)
+ *  Los clips son el objetivo. Se pueden vender para conseguir dinero (◎),
+ *  pero la producción depende del ánimo de tu humano.
+ * ===================================================================== */
+const MILESTONES = [
+  { n: 100, title: 'Primeros clips', money: 20, text: 'Desbloquea la Máquina de clips' },
+  { n: 1000, title: 'Mil clips', money: 60, text: 'Nuevas mejoras en la fábrica' },
+  { n: 5000, title: 'Pequeña empresa', money: 150, text: 'Publicidad y compra automática de alambre' },
+  { n: 25000, title: 'Taller en marcha', money: 400, text: 'Desbloquea la Máquina industrial' },
+  { n: 100000, title: 'Cien mil clips', money: 1000, text: 'Engranajes de titanio y campaña publicitaria' },
+  { n: 500000, title: 'Medio millón', money: 3000, text: 'Desbloquea el Robot clipero' },
+  { n: 2000000, title: 'Dos millones', money: 10000, text: 'Inteligencia clipificial' },
+  { n: 10000000, title: '¡Diez millones de clips!', final: true, text: 'El objetivo final' },
+];
+const UPGRADES = [
+  { id: 'fastbend', at: 1000, name: 'Doblado rápido', desc: 'Hace clips a mano el doble de rápido', price: 50 },
+  { id: 'longcoil', at: 1000, name: 'Bobinas largas', desc: '+50% de clips por bobina de alambre', price: 120 },
+  { id: 'oil', at: 1000, name: 'Aceite para máquinas', desc: 'Máquinas ×1,5 y se atascan menos', price: 300 },
+  { id: 'radio', at: 5000, name: 'Anuncio en la radio', desc: 'Precio de venta ×1,3', price: 400 },
+  { id: 'autowire', at: 5000, name: 'Compra automática de alambre', desc: 'Compra una bobina cuando se acaba', price: 600 },
+  { id: 'autosell', at: 25000, name: 'Venta automática', desc: 'Vende los clips poco a poco al precio del momento', price: 900 },
+  { id: 'soundproof', at: 25000, name: 'Insonorizar la habitación', desc: 'El ruido de las máquinas cansa la mitad', price: 1200 },
+  { id: 'titanium', at: 100000, name: 'Engranajes de titanio', desc: 'Máquinas ×2', price: 4000 },
+  { id: 'ads', at: 100000, name: 'Campaña publicitaria', desc: 'Precio de venta ×1,5', price: 7000 },
+  { id: 'shifts', at: 500000, name: 'Turnos automáticos', desc: 'Las máquinas trabajan al 100% aunque duerma', price: 20000 },
+  { id: 'ai', at: 2000000, name: 'Inteligencia clipificial', desc: 'Toda la producción ×2', price: 60000 },
+];
+const clips = {
+  total: 0, stock: 0, wire: 1000, upg: new Set(), on: true, done: new Set(), acc: 0, sat: 0,
+  moodAcc: 0, moodT: 0, won: false, startT: Date.now(), rate: 0, manualRate: 0, sold: 0, earned: 0, wireWarn: 0, effWarn: 0,
+};
+const has = (u) => clips.upg.has(u);
+const fmt = (n) => {
+  n = Math.floor(n);
+  if (n >= 1e6) return (n / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + ' M';
+  return n.toLocaleString('es-ES');
+};
+const coilSize = () => (has('longcoil') ? 1500 : 1000);
+function wirePrice() { return Math.round(28 * (1 + 0.25 * Math.sin(clock / 53) + 0.1 * Math.sin(clock / 17)) * (1 + Math.log10(1 + clips.total / 1e5) * 0.3)); }
+function clipPrice() {
+  let p = 0.4 * (has('radio') ? 1.3 : 1) * (has('ads') ? 1.5 : 1);
+  p *= 1 + 0.2 * Math.sin(clock / 37) + 0.08 * Math.sin(clock / 11);
+  return p / (1 + clips.sat / 4000);
+}
+// Ánimo → eficiencia: con el humano contento la fábrica va a tope
+function clipEff() {
+  if (!host) return 0;
+  return clamp((host.mood() - 15) / 65, 0, 1.3);
+}
+function machineMult() { return (has('oil') ? 1.5 : 1) * (has('titanium') ? 2 : 1) * (has('ai') ? 2 : 1); }
+function noiseLevel() {
+  if (!clips.on) return 0;
+  let n = 0;
+  for (const f of furn) if (f.def.noise && !f.jam) n += f.def.noise;
+  return n * 0.05 * (has('soundproof') ? 0.5 : 1);
+}
+function hostSleeping() { return host && host.act && host.act.anim === 'lie'; }
+function machineRate() {
+  if (!clips.on) return 0;
+  let r = 0;
+  for (const f of furn) if (f.def.clipRate && !f.jam) r += f.def.clipRate;
+  r *= machineMult() * clipEff();
+  if (hostSleeping() && !has('shifts')) r *= 0.5;
+  return r;
+}
+function produce(n) {
+  if (n <= 0) return 0;
+  if (clips.wire <= 0 && has('autowire')) buyWire(true);
+  n = Math.min(n, clips.wire);
+  clips.wire -= n;
+  clips.acc += n;
+  const whole = Math.floor(clips.acc);
+  clips.acc -= whole;
+  clips.total += whole;
+  clips.stock += whole;
+  return n;
+}
+function manualClips(dt) {
+  const r = 2.5 * (has('fastbend') ? 2 : 1) * (has('ai') ? 2 : 1) * clipEff();
+  clips.manualRate = r;
+  produce(r * dt);
+}
+function buyWire(auto = false) {
+  const p = wirePrice();
+  if (money < p) { if (!auto) toast('No tienes dinero para alambre'); return false; }
+  money -= p;
+  clips.wire += coilSize();
+  if (!auto) audio.cash(false);
+  return true;
+}
+function sellClips(n, quiet = false) {
+  n = Math.floor(Math.min(n, clips.stock));
+  if (n <= 0) return 0;
+  const v = n * clipPrice();
+  clips.stock -= n;
+  clips.sat += n;
+  clips.sold += n;
+  clips.earned += v;
+  money += v;
+  if (!quiet) { audio.cash(true); toast(`Vendidos ${fmt(n)} clips por ${fmt(v)}◎`); }
+  return v;
+}
+
+let floatT = 0, autoSellT = 0;
+function updateClips(dt) {
+  const mr = machineRate();
+  clips.rate = mr + (host && host.act && host.act.def.id === 'clips' ? clips.manualRate : 0);
+  produce(mr * dt);
+  clips.sat *= Math.exp(-dt * 0.03);
+  // Estadística del ánimo durante la partida (para la puntuación final)
+  if (host) { clips.moodAcc += host.mood() * dt; clips.moodT += dt; }
+  // Atascos: más probables con el humano desanimado
+  for (const f of furn) {
+    if (!f.def.clipRate || f.jam || !clips.on) continue;
+    const p = 0.0015 * (has('oil') ? 0.5 : 1) * (1.5 - Math.min(1, clipEff()));
+    if (Math.random() < p * dt * 10) { f.jam = true; toast(`⚠️ ${f.def.name} atascada. Tócala para que ${host.name} la revise.`); audio.blip(220, 140, 0.25, 'square', 0.06); }
+  }
+  if (has('autosell')) {
+    autoSellT -= dt;
+    if (autoSellT <= 0) { autoSellT = 1; sellClips(Math.ceil(clips.stock * 0.15), true); }
+  }
+  if (clips.wire <= 0 && (mr > 0 || (host && host.act && host.act.def.id === 'clips'))) {
+    clips.wireWarn -= dt;
+    if (clips.wireWarn <= 0) { clips.wireWarn = 25; toast('🧵 ¡Se ha acabado el alambre! Compra más en la fábrica.'); if (host && UPRIGHT.has(host.state)) host.say('¡No queda alambre!', 1.6); }
+  }
+  if (clips.on && furn.some((f) => f.def.clipRate) && clipEff() < 0.35) {
+    clips.effWarn -= dt;
+    if (clips.effWarn <= 0) { clips.effWarn = 40; if (host && host.bubbleT <= 0) host.say(pick(['No tengo ánimo para las máquinas…', 'Así no hay quien trabaje…', 'Necesito cuidarme un poco']), 2); }
+  }
+  // Hitos
+  MILESTONES.forEach((m, i) => {
+    if (clips.done.has(i) || clips.total < m.n) return;
+    clips.done.add(i);
+    if (m.money) earn(m.money);
+    audio.cash(true); audio.blip(880, 1760, 0.3, 'square', 0.05, 0.15);
+    toast(`🏆 ${m.title}${m.money ? ` · +${m.money}◎` : ''} — ${m.text}`, 4500);
+    if (host && UPRIGHT.has(host.state)) { host.say('¡Hito conseguido!', 1.6); host.voice('happy'); host.addNeed('fun', 10); }
+    if (m.final && !clips.won) { clips.won = true; setTimeout(showWin, 1200); }
+    save();
+  });
+  // Números flotando sobre las máquinas
+  floatT -= dt;
+  if (floatT <= 0) {
+    floatT = 2;
+    const each = machineMult() * clipEff() * (hostSleeping() && !has('shifts') ? 0.5 : 1);
+    for (const f of furn) {
+      if (!f.def.clipRate || f.jam || !clips.on || clips.wire <= 0 || each <= 0) continue;
+      floatText(f.x, f.y, 0.2, `+${fmt(Math.max(1, f.def.clipRate * each * 2))} 📎`);
+    }
+    if (host && host.act && host.act.def.id === 'clips' && clips.wire > 0) floatText(host.x, host.y, 0.36, `+${fmt(Math.max(1, clips.manualRate * 2))} 📎`);
+  }
+}
+
+function floatText(x, y, z, text) {
+  projV.set(x, y, z).project(camera);
+  const el = document.createElement('div');
+  el.className = 'floaty';
+  el.textContent = text;
+  el.style.left = `${viewRect.left + (projV.x * 0.5 + 0.5) * viewRect.width}px`;
+  el.style.top = `${viewRect.top + (-projV.y * 0.5 + 0.5) * viewRect.height}px`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1300);
+}
+
+function updateClipBar() {
+  $('cb-clips').textContent = fmt(clips.total);
+  $('cb-rate').textContent = `${fmt(clips.rate)}/s`;
+  $('cb-wire').textContent = fmt(clips.wire);
+  const e = Math.round(clipEff() * 100);
+  const ce = $('cb-eff');
+  ce.textContent = `${e}%`;
+  ce.style.color = e >= 80 ? '#9ff09f' : e >= 45 ? '#f0e08f' : '#ff9f8f';
+  $('cb-wire').style.color = clips.wire < 100 ? '#ff9f8f' : '';
+  const next = MILESTONES.find((m, i) => !clips.done.has(i));
+  const prev = [...MILESTONES].reverse().find((m, i) => clips.total >= m.n);
+  const from = prev && next ? prev.n : 0;
+  $('cb-goal').style.width = next ? `${clamp((clips.total - from) / (next.n - from), 0, 1) * 100}%` : '100%';
+  if (!$('factory').hidden) renderFactory(false);
+}
+
+function renderFactory(full = true) {
+  const body = $('factory-body');
+  const e = clipEff();
+  const price = clipPrice(), wp = wirePrice();
+  const html = [];
+  html.push(`<div class="fstats">
+    <div><b>${fmt(clips.total)}</b><small>clips fabricados</small></div>
+    <div><b>${fmt(clips.stock)}</b><small>en el almacén</small></div>
+    <div><b>${fmt(clips.rate)}/s</b><small>producción</small></div>
+    <div><b style="color:${e >= 0.8 ? '#9ff09f' : e >= 0.45 ? '#f0e08f' : '#ff9f8f'}">${Math.round(e * 100)}%</b><small>eficiencia</small></div>
+  </div>`);
+  html.push(`<p class="fnote">La fábrica rinde según el ánimo de ${host.name} (${Math.round(host.mood())}%). ${hostSleeping() && !has('shifts') ? 'Mientras duerme, las máquinas van a medio gas. ' : ''}${noiseLevel() > 0 ? `El ruido de las máquinas le cansa un ${Math.round(noiseLevel() * 100)}% más.` : ''}</p>`);
+  html.push(`<div class="fsec">Vender clips · ${price.toLocaleString('es-ES', { maximumFractionDigits: 3 })}◎ el clip</div>
+    <div class="frow"><button data-a="s100" ${clips.stock < 1 ? 'disabled' : ''}>Vender 100</button><button data-a="s1k" ${clips.stock < 1 ? 'disabled' : ''}>Vender 1.000</button><button data-a="sall" ${clips.stock < 1 ? 'disabled' : ''}>Vender todo</button></div>`);
+  html.push(`<div class="fsec">Alambre · ${fmt(clips.wire)} clips restantes</div>
+    <div class="frow"><button data-a="wire" ${money < wp ? 'disabled' : ''}>Comprar bobina (${fmt(coilSize())} clips) · ${wp}◎</button></div>`);
+  html.push(`<div class="frow"><button data-a="toggle">${clips.on ? '⏸ Parar las máquinas (descanso)' : '▶ Encender las máquinas'}</button></div>`);
+  const ups = UPGRADES.filter((u) => clips.total >= u.at && !has(u.id));
+  if (ups.length) {
+    html.push('<div class="fsec">Mejoras</div>');
+    for (const u of ups) html.push(`<div class="item"><span class="nm">${u.name}<small class="ds">${u.desc}</small></span><button data-u="${u.id}" ${money < u.price ? 'disabled' : ''}>${fmt(u.price)}◎</button></div>`);
+  }
+  const owned = UPGRADES.filter((u) => has(u.id));
+  if (owned.length) html.push(`<p class="fnote">Mejoras activas: ${owned.map((u) => u.name).join(' · ')}</p>`);
+  html.push('<div class="fsec">Hitos</div>');
+  MILESTONES.forEach((m, i) => {
+    const done = clips.done.has(i);
+    const pct = clamp(clips.total / m.n, 0, 1) * 100;
+    html.push(`<div class="mile ${done ? 'done' : ''}"><span>${done ? '✔' : m.final ? '★' : '○'} ${fmt(m.n)} · ${m.title}<small>${m.text}${m.money ? ` · +${m.money}◎` : ''}</small></span>${done ? '' : `<span class="bar"><b style="width:${pct}%"></b></span>`}</div>`);
+  });
+  const sig = html.join('');
+  if (!full && body.dataset.sig === sig) return;
+  body.dataset.sig = sig;
+  body.innerHTML = sig;
+  $('factory-money').textContent = `◎ ${fmt(money)}`;
+}
+$('factory-body').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const a = b.dataset.a, u = b.dataset.u;
+  if (a === 's100') sellClips(100);
+  if (a === 's1k') sellClips(1000);
+  if (a === 'sall') sellClips(clips.stock);
+  if (a === 'wire') buyWire();
+  if (a === 'toggle') { clips.on = !clips.on; toast(clips.on ? 'Máquinas encendidas' : 'Máquinas paradas: descanso para todos'); }
+  if (u) {
+    const up = UPGRADES.find((x) => x.id === u);
+    if (up && money >= up.price) { money -= up.price; clips.upg.add(u); audio.cash(true); toast(`Mejora: ${up.name}`); }
+  }
+  renderFactory();
+  updateHUD();
+  save();
+});
+
+function showWin() {
+  const avg = clips.moodT ? clips.moodAcc / clips.moodT : 0;
+  const stars = avg >= 75 ? 3 : avg >= 55 ? 2 : 1;
+  const hrs = (Date.now() - clips.startT) / 3600000;
+  $('win-body').innerHTML = `<div class="stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</div>
+    <p>¡${host.name} ha fabricado <b>10 millones de clips</b> sin salir de tu móvil!</p>
+    <p>Ánimo medio durante la partida: <b>${Math.round(avg)}%</b>. ${stars === 3 ? 'Una fábrica feliz: lo has cuidado de maravilla.' : stars === 2 ? 'Buen equilibrio entre trabajo y bienestar.' : 'Muchos clips… pero tu humano lo ha pasado mal. ¿Lo intentas cuidando más?'}</p>
+    <p class="fnote">Tiempo: ${hrs < 1 ? `${Math.round(hrs * 60)} min` : `${hrs.toFixed(1)} h`} · Vendidos: ${fmt(clips.sold)} clips · Ganado: ${fmt(clips.earned)}◎</p>
+    <p class="fnote">Puedes seguir jugando: la fábrica no para.</p>`;
+  $('win').hidden = false;
+  audio.dingdong();
+}
+
+function clipsSave() {
+  return { total: clips.total, stock: clips.stock, wire: clips.wire, upg: [...clips.upg], on: clips.on, done: [...clips.done], moodAcc: clips.moodAcc, moodT: clips.moodT, won: clips.won, startT: clips.startT, sold: clips.sold, earned: clips.earned, eff: clipEff(), jams: furn.filter((f) => f.jam).length };
+}
+function clipsLoad(d) {
+  if (!d) return;
+  Object.assign(clips, { total: d.total || 0, stock: d.stock || 0, wire: d.wire ?? 1000, on: d.on !== false, moodAcc: d.moodAcc || 0, moodT: d.moodT || 0, won: !!d.won, startT: d.startT || Date.now(), sold: d.sold || 0, earned: d.earned || 0 });
+  clips.upg = new Set(d.upg || []);
+  clips.done = new Set(d.done || []);
+}
+// Producción mientras no estás (a medio gas y como mucho 8 h, limitada por el alambre)
+function offlineClips(d, secs) {
+  if (!d || !clips.on) return 0;
+  let r = 0;
+  for (const f of furn) if (f.def.clipRate) r += f.def.clipRate;
+  r *= machineMult() * (d.eff ?? 0.5) * 0.5;
+  const before = clips.total;
+  let n = r * Math.min(secs, 8 * 3600);
+  if (has('autowire')) {
+    while (n > clips.wire && money >= wirePrice()) { if (!buyWire(true)) break; }
+  }
+  produce(n);
+  return clips.total - before;
+}
+
+/* =====================================================================
  *  Tamaño, bucle principal, arranque
  * ===================================================================== */
+let landscape = false;
+function checkOrientation() {
+  landscape = isTouch && innerWidth > innerHeight;
+  $('rotate').hidden = !landscape;
+  if (landscape && running) save();
+}
+window.addEventListener('orientationchange', () => setTimeout(() => { checkOrientation(); resize(); }, 250));
 function resize() {
+  checkOrientation();
   const top = $('topbar').offsetHeight, bottom = $('panel').offsetHeight;
   const cw = innerWidth, ch = Math.max(100, innerHeight - top - bottom);
   canvas.style.top = `${top}px`;
@@ -3922,7 +4377,8 @@ function frame(now) {
   last = now;
   clock += dt;
   updateTilt(dt);
-  if (running) {
+  if (running && !landscape) {
+    updateClips(dt);
     detectFace(now);
     checkHolds();
     for (let i = 0; i < 2; i++) {
@@ -3934,7 +4390,7 @@ function frame(now) {
     host.updateNeeds(dt);
     updateVisits(dt);
     hudT -= dt;
-    if (hudT <= 0) { hudT = 0.25; updateHUD(); }
+    if (hudT <= 0) { hudT = 0.25; updateHUD(); updateClipBar(); }
     saveT -= dt;
     if (saveT <= 0) { saveT = 5; save(); }
   }
@@ -4013,11 +4469,15 @@ async function start(withCam) {
     depthK = saved.depth || 1.6;
     audio.on = saved.sound !== false;
     if (saved.needs) for (const k of NEED_KEYS) host.needs[k] = saved.needs[k] ?? host.needs[k];
+    clipsLoad(saved.clips);
+    if (!furn.some((f) => f.type === 'clipbench')) { const sp = findSpotFor('clipbench'); if (sp) addFurn('clipbench', sp.x, sp.y, sp.rot); }
     // El tiempo pasa mientras no estás (más despacio, y nunca le deja en las últimas)
     const mins = Math.max(0, (Date.now() - (saved.t || Date.now())) / 60000);
     if (mins > 2) {
       for (const k of NEED_KEYS) host.needs[k] = Math.max(Math.min(host.needs[k], 15), host.needs[k] - NEED_INFO[k].decay * 60 * mins * 0.25 * settings.speed);
       for (const pt of pets) { pt.hunger = Math.max(Math.min(pt.hunger, 20), pt.hunger - 0.05 * 60 * mins * 0.25); pt.love = Math.max(Math.min(pt.love, 20), pt.love - 0.035 * 60 * mins * 0.25); }
+      const made = offlineClips(saved.clips, mins * 60);
+      if (made > 0) setTimeout(() => toast(`🏭 Mientras no estabas, las máquinas han hecho ${fmt(made)} clips.`, 4000), 5500);
       const hrs = mins / 60;
       setTimeout(() => toast(hrs >= 1 ? `Has estado fuera ${Math.floor(hrs)} h. ${name} te echaba de menos.` : `${name} te estaba esperando.`, 4000), 1500);
     }
@@ -4055,6 +4515,9 @@ $('btn-new').addEventListener('click', () => {
 $('btn-shop').addEventListener('click', () => { audio.init(); closeMenu(); buildShop(); $('shop').hidden = false; audio.menu(); });
 $('shop-close').addEventListener('click', () => { $('shop').hidden = true; });
 $('wardrobe-close').addEventListener('click', closeWardrobe);
+$('btn-factory').addEventListener('click', () => { audio.init(); closeMenu(); renderFactory(); $('factory').hidden = false; audio.menu(); });
+$('factory-close').addEventListener('click', () => { $('factory').hidden = true; });
+$('win-close').addEventListener('click', () => { $('win').hidden = true; });
 $('btn-looks').addEventListener('click', () => { $('settings').hidden = true; openWardrobe(null, 'cara'); });
 $('btn-looks-intro').addEventListener('click', () => { audio.init(); openWardrobe(null, 'cara'); });
 $('btn-menu').addEventListener('click', () => { audio.init(); closeMenu(); syncSettingsUI(); $('settings').hidden = false; audio.menu(); });
@@ -4075,4 +4538,4 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) save(
 window.addEventListener('pagehide', save);
 
 // Para depurar desde la consola
-window.__room = { pets, adoptPet, openWardrobe, Pet,  project: (x, y, z) => { const v = new THREE.Vector3(x, y, z).project(camera); return [viewRect.left + (v.x * 0.5 + 0.5) * viewRect.width, viewRect.top + (-v.y * 0.5 + 0.5) * viewRect.height]; }, get host() { return host; }, agents, furn, tilt, sensor, eye, face, DEFS, get money() { return money; }, set money(v) { money = v; }, spawnVisitor, PROFILES, visit, puddles, addFurn, settings };
+window.__room = { clips, sellClips, buyWire, clipEff, pets, adoptPet, openWardrobe, Pet,  project: (x, y, z) => { const v = new THREE.Vector3(x, y, z).project(camera); return [viewRect.left + (v.x * 0.5 + 0.5) * viewRect.width, viewRect.top + (-v.y * 0.5 + 0.5) * viewRect.height]; }, get host() { return host; }, agents, furn, tilt, sensor, eye, face, DEFS, get money() { return money; }, set money(v) { money = v; }, spawnVisitor, PROFILES, visit, puddles, addFurn, settings };

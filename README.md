@@ -2,6 +2,14 @@
 
 Un pequeño simulador de vida retro **dentro de la pantalla del móvil**: la pantalla es el cristal de una habitación que se ve desde arriba, con profundidad 3D real. Gráficos de píxel gordo con paleta reducida y tramado, interfaz de paneles biselados al estilo de los juegos de los 90.
 
+**Objetivo: la fábrica de clips (juego incremental)**
+- La meta es fabricar **10 millones de clips**. Los clips no son la moneda: son el objetivo. Se pueden **vender** (a un precio que fluctúa y baja si inundas el mercado) para conseguir monedas ◎ con las que comprar cosas.
+- Se fabrican a mano en la **Mesa de clips** y con máquinas que se van desbloqueando: **Máquina de clips**, **Máquina industrial** y **Robot clipero**. Cada clip gasta alambre, que se compra por bobinas a precio variable.
+- **La producción depende del ánimo del humano**: con buen ánimo la fábrica va al 100% (o más); si está mal, apenas produce. Mientras duerme, las máquinas van a medio gas. Las máquinas hacen **ruido** que le cansa y le aburre, y se **atascan** más si está desanimado (hay que mandarle a revisarlas). Puedes pararlas para que descanse. Para compensar hay objetos de **lujo** (cama de lujo, jacuzzi, sillón de masaje).
+- **Mejoras** (doblado rápido, bobinas largas, aceite, publicidad, compra de alambre y venta automáticas, insonorización, engranajes de titanio, turnos automáticos, inteligencia clipificial…) y **8 hitos** con premios. Al llegar a la meta, la puntuación (1 a 3 estrellas) depende del ánimo medio durante la partida.
+- Las máquinas siguen produciendo (a medio gas, hasta 8 h) mientras no juegas.
+- Solo se juega con el móvil en **vertical**: en horizontal aparece un aviso y la partida se pausa.
+
 **Cuidar al humano (tipo Tamagotchi)**
 - Seis necesidades que bajan con el tiempo: **Hambre, Energía, Diversión, Higiene, Vejiga y Social**. El ánimo general sale de ellas.
 - **Toca cualquier objeto** para ver qué puede hacer con él: comer de la nevera (y sentarse a la mesa con el plato), dormir o echar la siesta, ducharse, ir al váter, trabajar o jugar en el ordenador, ver la tele, bailar, jugar a la pelota, leer, mirar los peces… También puedes girar o vender el objeto.
