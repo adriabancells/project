@@ -1088,6 +1088,133 @@ function setLamp(f, on) {
   audio.click();
 }
 
+
+/* ---------- Apariencia: cara, peinados y altura ---------- */
+const HEIGHTS = { small: 0.88, normal: 1, tall: 1.1 };
+const LOOKS = {
+  hairStyle: [['short', 'Corto'], ['long', 'Largo'], ['bun', 'Moño'], ['ponytail', 'Coleta'], ['pigtails', 'Coletas'], ['curly', 'Rizado'], ['afro', 'Afro'], ['spiky', 'De punta'], ['mohawk', 'Cresta'], ['flat', 'Cepillo'], ['bald', 'Rapado']],
+  eyes: [['dot', 'Puntitos'], ['big', 'Grandes'], ['round', 'Redondos'], ['sleepy', 'Dormilones'], ['lashes', 'Pestañas'], ['happy', 'Felices'], ['wink', 'Guiño']],
+  brows: [['none', 'Sin cejas'], ['thin', 'Finas'], ['thick', 'Pobladas'], ['angry', 'Enfadadas'], ['raised', 'Sorprendidas']],
+  nose: [['none', 'Sin nariz'], ['button', 'Botón'], ['round', 'Redonda'], ['big', 'Grande'], ['long', 'Larga']],
+  mouth: [['smile', 'Sonrisa'], ['grin', 'Sonrisa amplia'], ['line', 'Seria'], ['open', 'Abierta'], ['pout', 'Morritos'], ['none', 'Sin boca']],
+  facial: [['none', 'Nada'], ['mustache', 'Bigote'], ['goatee', 'Perilla'], ['beard', 'Barba'], ['stubble', 'Barba de 3 días']],
+  cheeks: [['none', 'Nada'], ['blush', 'Colorete'], ['freckles', 'Pecas'], ['both', 'Las dos']],
+  height: [['small', 'Bajito'], ['normal', 'Normal'], ['tall', 'Alto']],
+};
+const EYE_COLORS = ['#1e1a1a', '#5a3a22', '#2f6fb0', '#3f8f5f', '#7a7a8a', '#8a4fb0', '#b08a2a'];
+
+function buildFace(head, p, skin, hair) {
+  const R = 0.043, CY = 0.04;
+  const fz = (x, y) => Math.sqrt(Math.max(0, R * R - x * x - (y - CY) * (y - CY)));
+  const add = (w, h, d, m, x, y, dz = 0.002, rotZ = 0) => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), typeof m === 'string' ? mat(m) : m);
+    o.position.set(x, y, fz(x, y) + dz); o.rotation.z = rotZ; head.add(o); return o;
+  };
+  const eyeC = p.eyeColor || '#1e1a1a', white = '#fbf8f2', dark = '#1e1a1a';
+  const eyes = p.eyes || 'dot';
+  for (const s of [-1, 1]) {
+    const x = s * 0.016, y = 0.047;
+    if (eyes === 'dot' || (eyes === 'wink' && s === -1)) add(0.009, 0.012, 0.006, eyeC, x, y);
+    else if (eyes === 'wink') add(0.012, 0.003, 0.004, dark, x, y);
+    else if (eyes === 'big') { add(0.017, 0.018, 0.004, white, x, y); add(0.009, 0.012, 0.004, eyeC, x + s * 0.001, y - 0.001, 0.004); }
+    else if (eyes === 'round') {
+      const w = new THREE.Mesh(new THREE.SphereGeometry(0.009, 8, 6), mat(white)); w.position.set(x, y, fz(x, y) - 0.002); head.add(w);
+      add(0.007, 0.008, 0.004, eyeC, x, y, 0.006);
+    } else if (eyes === 'sleepy') { add(0.015, 0.008, 0.004, white, x, y - 0.002); add(0.007, 0.005, 0.004, eyeC, x, y - 0.003, 0.004); add(0.018, 0.006, 0.005, skin, x, y + 0.003, 0.004); }
+    else if (eyes === 'lashes') { add(0.009, 0.012, 0.006, eyeC, x, y); add(0.007, 0.002, 0.004, dark, x + s * 0.007, y + 0.007, 0.002, s * 0.6); add(0.006, 0.002, 0.004, dark, x + s * 0.009, y + 0.004, 0.002, s * 0.2); }
+    else if (eyes === 'happy') { add(0.008, 0.003, 0.004, dark, x - 0.003, y, 0.002, 0.7); add(0.008, 0.003, 0.004, dark, x + 0.003, y, 0.002, -0.7); }
+  }
+  const brows = p.brows || 'thin';
+  if (brows !== 'none') for (const s of [-1, 1]) {
+    const x = s * 0.016;
+    if (brows === 'thin') add(0.015, 0.003, 0.004, hair, x, 0.062);
+    if (brows === 'thick') add(0.018, 0.006, 0.005, hair, x, 0.063);
+    if (brows === 'angry') add(0.017, 0.005, 0.005, hair, x, 0.061, 0.002, s * -0.4);
+    if (brows === 'raised') add(0.015, 0.004, 0.004, hair, x, 0.068, 0.002, s * 0.25);
+  }
+  const nose = p.nose || 'button';
+  const noseMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(p.skin || '#f2d2b6').multiplyScalar(0.85), flatShading: true });
+  if (nose === 'button') add(0.008, 0.008, 0.008, noseMat, 0, 0.035, 0.002);
+  if (nose === 'big') add(0.015, 0.017, 0.014, noseMat, 0, 0.035, 0.004);
+  if (nose === 'long') add(0.008, 0.009, 0.026, noseMat, 0, 0.037, 0.01);
+  if (nose === 'round') { const n = new THREE.Mesh(new THREE.SphereGeometry(0.009, 8, 6), mat('#e8907a')); n.position.set(0, 0.035, fz(0, 0.035) + 0.003); head.add(n); }
+  const mouth = p.mouth || 'smile', lip = '#8a2f2f';
+  if (mouth === 'smile') { add(0.01, 0.003, 0.004, lip, 0, 0.021); add(0.005, 0.003, 0.004, lip, -0.007, 0.023, 0.001, -0.5); add(0.005, 0.003, 0.004, lip, 0.007, 0.023, 0.001, 0.5); }
+  if (mouth === 'grin') { add(0.024, 0.009, 0.004, lip, 0, 0.022); add(0.02, 0.004, 0.004, white, 0, 0.024, 0.002); }
+  if (mouth === 'line') add(0.014, 0.003, 0.004, lip, 0, 0.022);
+  if (mouth === 'open') add(0.011, 0.011, 0.004, '#4a1a1a', 0, 0.021);
+  if (mouth === 'pout') { const m = new THREE.Mesh(new THREE.SphereGeometry(0.006, 6, 5), mat('#d0607a')); m.position.set(0, 0.022, fz(0, 0.022) + 0.001); head.add(m); }
+  const facial = p.facial || 'none';
+  if (facial === 'mustache') { add(0.012, 0.005, 0.006, hair, -0.007, 0.028, 0.003, 0.25); add(0.012, 0.005, 0.006, hair, 0.007, 0.028, 0.003, -0.25); }
+  if (facial === 'goatee') add(0.014, 0.016, 0.008, hair, 0, 0.008, 0.001);
+  if (facial === 'beard') {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.03, 0.04), mat(p.hair || '#5a3a22')); b.position.set(0, 0.012, 0.016); head.add(b);
+    add(0.024, 0.005, 0.006, hair, 0, 0.028, 0.003);
+  }
+  if (facial === 'stubble') {
+    const st = new THREE.MeshLambertMaterial({ color: p.hair || '#5a3a22', transparent: true, opacity: 0.35 });
+    const b = new THREE.Mesh(new THREE.BoxGeometry(0.066, 0.026, 0.036), st); b.position.set(0, 0.014, 0.018); head.add(b);
+  }
+  const cheeks = p.cheeks || 'none';
+  for (const s of [-1, 1]) {
+    if (cheeks === 'blush' || cheeks === 'both') add(0.011, 0.006, 0.003, '#ec8f98', s * 0.026, 0.032);
+    if (cheeks === 'freckles' || cheeks === 'both') for (const [dx, dy] of [[0, 0], [0.006, 0.004], [0.009, -0.003]]) add(0.003, 0.003, 0.003, '#a8643a', s * (0.019 + dx), 0.038 + dy, 0.0025);
+  }
+}
+
+function buildHairExtras(head, p, hair, hat) {
+  const h = p.hairStyle;
+  const sph = (r, x, y, z) => { const o = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), hair); o.position.set(x, y, z); o.castShadow = true; head.add(o); return o; };
+  if (h === 'afro') sph(0.064, 0, 0.058, -0.012).scale.set(1, 0.85, 1);
+  if (h === 'curly') for (let i = 0; i < 9; i++) { const a = (i / 9) * Math.PI * 2; sph(0.016, Math.cos(a) * 0.036, 0.075 + Math.sin(i * 1.7) * 0.006, Math.sin(a) * 0.032 - 0.008); }
+  if (h === 'pigtails') for (const s of [-1, 1]) { sph(0.018, s * 0.052, 0.04, -0.015); sph(0.012, s * 0.058, 0.018, -0.018); }
+  if (h === 'ponytail') { const t = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.055, 0.02), hair); t.position.set(0, 0.035, -0.055); t.rotation.x = 0.35; head.add(t); sph(0.014, 0, 0.07, -0.044); }
+  if (h === 'spiky' && !hat) for (let i = 0; i < 6; i++) {
+    const c = new THREE.Mesh(new THREE.ConeGeometry(0.011, 0.03, 4), hair);
+    const a = (i / 6) * Math.PI * 2; c.position.set(Math.cos(a) * 0.022, 0.092, Math.sin(a) * 0.02 - 0.006); c.rotation.set(Math.sin(a) * 0.4, 0, -Math.cos(a) * 0.4); head.add(c);
+  }
+  if (h === 'mohawk' && !hat) { const m = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.035, 0.085), hair); m.position.set(0, 0.088, -0.006); head.add(m); }
+}
+
+/* ---------- Vista previa en primer plano ---------- */
+const preview = { renderer: null, scene: null, cam: null, rig: null, t: 0 };
+function refreshPreview() {
+  const cv = $('preview');
+  if (!cv) return;
+  if (!preview.renderer) {
+    preview.renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: false });
+    preview.renderer.setPixelRatio(1);
+    preview.renderer.setSize(96, 96, false);
+    preview.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    preview.scene = new THREE.Scene();
+    preview.scene.background = new THREE.Color('#2a3d66');
+    const hemi = new THREE.HemisphereLight('#fff6e8', '#5a4a6a', 1.6); hemi.position.set(0, 0, 1); preview.scene.add(hemi);
+    const dl = new THREE.DirectionalLight('#ffffff', 1.6); dl.position.set(0.4, -1, 0.8); preview.scene.add(dl);
+    preview.cam = new THREE.PerspectiveCamera(30, 1, 0.01, 5);
+    preview.cam.up.set(0, 0, 1);
+  }
+  if (preview.rig) preview.scene.remove(preview.rig.root);
+  const tmp = { p: { ...host.p } };
+  Agent.prototype.buildRig.call(tmp);
+  scene.remove(tmp.rig.root);
+  preview.rig = tmp.rig;
+  const r = tmp.rig;
+  r.body.rotation.x = HALF_PI;
+  r.pelvis.position.y = 0.104;
+  r.shL.rotation.z = 0.12; r.shR.rotation.z = -0.12;
+  preview.scene.add(r.root);
+}
+function renderPreview(dt) {
+  if (!preview.rig) return;
+  preview.t += dt;
+  const sc = preview.rig.body.scale.x;
+  const zf = 0.27 * sc;
+  preview.rig.heading.rotation.z = Math.sin(preview.t * 0.8) * 0.5;
+  preview.cam.position.set(0, -0.32, zf + 0.03);
+  preview.cam.lookAt(0, 0, zf - 0.015);
+  preview.renderer.render(preview.scene, preview.cam);
+}
+
 /* =====================================================================
  *  Humanos (el tuyo y las visitas)
  * ===================================================================== */
@@ -1155,21 +1282,21 @@ class Agent {
     r.root = new THREE.Group(); r.lean = new THREE.Group(); r.heading = new THREE.Group(); r.body = new THREE.Group();
     r.root.add(r.lean); r.lean.add(r.heading); r.heading.add(r.body);
     r.body.rotation.x = HALF_PI;
-    r.body.scale.setScalar(p.scale || 1);
+    r.body.scale.setScalar(p.scale || HEIGHTS[p.height] || 1);
     r.pelvis = new THREE.Group(); r.body.add(r.pelvis);
     r.chest = new THREE.Group(); r.pelvis.add(r.chest);
     const torso = capsule(0.032, 0.05, shirt); torso.position.y = 0.057; r.chest.add(torso);
     r.head = new THREE.Group(); r.head.position.y = 0.122; r.chest.add(r.head);
     const headM = new THREE.Mesh(new THREE.SphereGeometry(0.043, 8, 6), skin);
     headM.position.y = 0.04; headM.castShadow = true; r.head.add(headM);
-    const eyeMat = mat('#1e1a1a');
-    for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.BoxGeometry(0.009, 0.012, 0.006), eyeMat); e.position.set(s * 0.016, 0.047, 0.04); r.head.add(e); }
+    buildFace(r.head, p, skin, hair);
     const cap = () => { const c = new THREE.Mesh(new THREE.SphereGeometry(0.047, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.55), hair); c.position.set(0, 0.043, -0.004); c.castShadow = true; return c; };
     const hat = acc === 'cap' || acc === 'tophat';
-    if (p.hairStyle !== 'bald' && !(hat && p.hairStyle === 'flat')) r.head.add(cap());
+    if (!['bald', 'afro', 'mohawk'].includes(p.hairStyle) && !(hat && p.hairStyle === 'flat')) r.head.add(cap());
     if (p.hairStyle === 'long') { const l = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.07, 0.025), hair); l.position.set(0, 0.025, -0.032); r.head.add(l); }
     if (p.hairStyle === 'bun') { const b = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 5), hair); b.position.set(0, 0.09, -0.02); r.head.add(b); }
     if (p.hairStyle === 'flat' && !hat) { const f = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.035, 0.075), hair); f.position.set(0, 0.085, -0.003); r.head.add(f); }
+    buildHairExtras(r.head, p, hair, hat);
     const part = (geo, m, x, y, z, parent = r.head) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
     if (acc === 'cap') { part(new THREE.CylinderGeometry(0.046, 0.047, 0.026, 8), accM, 0, 0.075, -0.003); part(new THREE.BoxGeometry(0.055, 0.006, 0.045), accM, 0, 0.066, 0.042); }
     if (acc === 'tophat') { part(new THREE.CylinderGeometry(0.032, 0.032, 0.075, 8), mat('#1e1a1a'), 0, 0.12, 0); part(new THREE.CylinderGeometry(0.056, 0.056, 0.005, 10), mat('#1e1a1a'), 0, 0.083, 0); part(new THREE.CylinderGeometry(0.033, 0.033, 0.012, 8), accM, 0, 0.092, 0); }
@@ -2646,11 +2773,12 @@ const PALETTE = {
   accColor: ['#c0504a', '#4f78b0', '#2a2630', '#e98fb0', '#5f9a55', '#e3c26a'],
 };
 let unlocked = new Set(['tee', 'tank', 'none', 'short', 'long', 'bun', 'flat', 'bald']);
-let wardrobeFurn = null, dressChanged = false;
+let wardrobeFurn = null, dressChanged = false, wTab = 'ropa';
 
-function openWardrobe(f) {
+function openWardrobe(f, tab = 'ropa') {
   wardrobeFurn = f;
   dressChanged = false;
+  wTab = tab;
   renderWardrobe();
   $('wardrobe').hidden = false;
   audio.menu();
@@ -2659,6 +2787,27 @@ function renderWardrobe() {
   const body = $('wardrobe-body');
   body.innerHTML = '';
   const p = host.p;
+  const tabs = document.createElement('div');
+  tabs.className = 'wtabs';
+  for (const [id, label] of [['ropa', 'Ropa'], ['cara', 'Cara y cuerpo']]) {
+    const b = document.createElement('button');
+    b.className = 'tab' + (wTab === id ? ' sel' : '');
+    b.textContent = label;
+    b.addEventListener('click', () => { wTab = id; renderWardrobe(); audio.menu(); });
+    tabs.appendChild(b);
+  }
+  body.appendChild(tabs);
+  const look = (title, key) => {
+    const row = section(title);
+    const cur = p[key] || LOOKS[key][key === 'height' ? 1 : 0][0];
+    for (const [id, name] of LOOKS[key]) {
+      const b = document.createElement('button');
+      b.className = 'wopt' + (cur === id ? ' sel' : '');
+      b.textContent = name;
+      b.addEventListener('click', () => { p[key] = id; dressChanged = true; host.rebuildRig(); renderWardrobe(); });
+      row.appendChild(b);
+    }
+  };
   const section = (title) => { const h = document.createElement('div'); h.className = 'wsec'; h.textContent = title; body.appendChild(h); const row = document.createElement('div'); row.className = 'wrow'; body.appendChild(row); return row; };
   const opts = (title, key, list) => {
     const row = section(title);
@@ -2675,29 +2824,42 @@ function renderWardrobe() {
       row.appendChild(b);
     }
   };
-  const colors = (title, key) => {
+  const colors = (title, key, list = PALETTE[key]) => {
     const row = section(title);
-    for (const c of PALETTE[key]) {
+    for (const c of list) {
       const b = document.createElement('button');
-      b.className = 'sw' + ((p[key] || PALETTE[key][0]) === c ? ' sel' : '');
+      b.className = 'sw' + ((p[key] || list[0]) === c ? ' sel' : '');
       b.style.background = c;
       b.addEventListener('click', () => { p[key] = c; dressChanged = true; host.rebuildRig(); renderWardrobe(); });
       row.appendChild(b);
     }
   };
-  opts('Parte de arriba', 'top', CLOTHES.top);
-  colors('Color de arriba', 'shirt');
-  colors('Pantalón', 'pants');
-  opts('Peinado', 'hairStyle', CLOTHES.hairStyle);
-  colors('Color de pelo', 'hair');
-  opts('Accesorio', 'acc', CLOTHES.acc);
-  colors('Color del accesorio', 'accColor');
-  colors('Piel', 'skin');
+  if (wTab === 'ropa') {
+    opts('Parte de arriba', 'top', CLOTHES.top);
+    colors('Color de arriba', 'shirt');
+    colors('Pantalón', 'pants');
+    opts('Accesorio', 'acc', CLOTHES.acc);
+    colors('Color del accesorio', 'accColor');
+  } else {
+    look('Peinado', 'hairStyle');
+    colors('Color de pelo', 'hair');
+    look('Ojos', 'eyes');
+    colors('Color de ojos', 'eyeColor', EYE_COLORS);
+    look('Cejas', 'brows');
+    look('Nariz', 'nose');
+    look('Boca', 'mouth');
+    look('Vello facial', 'facial');
+    look('Mejillas', 'cheeks');
+    colors('Piel', 'skin');
+    look('Altura', 'height');
+  }
+  $('wardrobe-title').textContent = wTab === 'ropa' ? 'Armario' : 'Apariencia';
   $('wardrobe-money').textContent = `◎ ${Math.floor(money)}`;
+  refreshPreview();
 }
 function closeWardrobe() {
   $('wardrobe').hidden = true;
-  if (dressChanged && host) {
+  if (dressChanged && host && running) {
     const f = wardrobeFurn && furn.includes(wardrobeFurn) ? wardrobeFurn : null;
     if (f) host.perform(f, f.def.actions[0], { user: true });
     host.addNeed('fun', 6);
@@ -3677,6 +3839,10 @@ function updateVisits(dt) {
   for (const p of pets) if (p.kind === 'dog' && p.state !== 'sleep' && p.state !== 'held') { p.walkTo(door.x, H / 2 - 0.12, () => { p.setState('wait', 2); p.say('¡Guau! ¡Guau!', 1.5); p.voice(); }, true); }
 }
 function spawnVisitor(profile, courier = false) {
+  if (!profile.eyes) {
+    const r = (k) => pick(LOOKS[k])[0];
+    profile = { ...profile, eyes: r('eyes'), brows: r('brows'), nose: r('nose'), mouth: pick(['smile', 'grin', 'line', 'open', 'pout']), eyeColor: pick(EYE_COLORS), cheeks: r('cheeks'), facial: Math.random() < 0.3 ? r('facial') : 'none' };
+  }
   const v = new Agent(profile, false);
   v.courier = courier;
   v.place(door.x, H / 2 - 0.03);
@@ -3711,7 +3877,7 @@ function save() {
   const data = {
     v: 2, name: host.name, money, needs: host.needs, born, lastDay, t: Date.now(), speed: settings.speed, depth: depthK, sound: audio.on,
     items: furn.map((f) => ({ type: f.type, fx: f.x / (W / 2), fy: f.y / (H / 2), rot: f.rot, on: f.on, food: f.food || 0 })),
-    outfit: { shirt: host.p.shirt, pants: host.p.pants, hair: host.p.hair, hairStyle: host.p.hairStyle, skin: host.p.skin, top: host.p.top, acc: host.p.acc, accColor: host.p.accColor },
+    outfit: Object.fromEntries(['shirt', 'pants', 'hair', 'hairStyle', 'skin', 'top', 'acc', 'accColor', 'eyes', 'eyeColor', 'brows', 'nose', 'mouth', 'facial', 'cheeks', 'height'].map((k) => [k, host.p[k]])),
     unlocked: [...unlocked],
     pets: pets.map((p) => ({ kind: p.kind, name: p.name, coat: p.coat, hunger: p.hunger, love: p.love, energy: p.energy, fx: p.x / (W / 2), fy: p.y / (H / 2) })),
   };
@@ -3772,6 +3938,7 @@ function frame(now) {
     saveT -= dt;
     if (saveT <= 0) { saveT = 5; save(); }
   }
+  if (!$('wardrobe').hidden) renderPreview(dt);
   door.open = damp(door.open, door.target, 5, dt);
   if (door.hinge) door.hinge.rotation.z = door.open;
   updateEye(dt);
@@ -3888,6 +4055,8 @@ $('btn-new').addEventListener('click', () => {
 $('btn-shop').addEventListener('click', () => { audio.init(); closeMenu(); buildShop(); $('shop').hidden = false; audio.menu(); });
 $('shop-close').addEventListener('click', () => { $('shop').hidden = true; });
 $('wardrobe-close').addEventListener('click', closeWardrobe);
+$('btn-looks').addEventListener('click', () => { $('settings').hidden = true; openWardrobe(null, 'cara'); });
+$('btn-looks-intro').addEventListener('click', () => { audio.init(); openWardrobe(null, 'cara'); });
 $('btn-menu').addEventListener('click', () => { audio.init(); closeMenu(); syncSettingsUI(); $('settings').hidden = false; audio.menu(); });
 $('settings-close').addEventListener('click', () => { $('settings').hidden = true; save(); });
 $('btn-eyes').addEventListener('click', () => { if (face.enabled) stopFace(); else startFace(); });

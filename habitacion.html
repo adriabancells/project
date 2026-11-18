@@ -58,7 +58,7 @@
     .bubble.thought::after { width: 6px; height: 6px; border: 2px solid #000; background: #fffbe8; border-radius: 50%; bottom: -10px; }
     .bubble.show { opacity: 1; }
 
-    #actmenu { position: fixed; z-index: 9; min-width: 200px; max-width: 86vw; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+    #actmenu { position: fixed; z-index: 31; min-width: 200px; max-width: 86vw; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
     #actmenu[hidden] { display: none; }
     #actmenu .mtitle { font-size: 22px; color: var(--gold); padding: 2px 4px 4px; border-bottom: 2px solid var(--lo); margin-bottom: 2px; }
     #actmenu button { font-family: var(--font); font-size: 21px; text-align: left; color: var(--text); padding: 6px 10px; background: var(--panel2);
@@ -67,7 +67,7 @@
     #actmenu button:disabled { opacity: .45; }
     #actmenu button.minor { font-size: 18px; background: #22304f; color: #b9c4e0; }
 
-    .modal { position: fixed; z-index: 10; inset: 0; display: flex; align-items: center; justify-content: center; padding: 14px; background: rgba(10,8,20,.55); }
+    .modal { position: fixed; z-index: 30; inset: 0; display: flex; align-items: center; justify-content: center; padding: 14px; background: rgba(10,8,20,.55); }
     .modal[hidden] { display: none; }
     .modal .win { width: 100%; max-width: 400px; max-height: 88vh; display: flex; flex-direction: column; }
     .win .tbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 4px 10px; background: linear-gradient(90deg, #4058a0, #2a3d66); font-size: 24px; color: var(--gold); }
@@ -86,6 +86,9 @@
     #shop-tabs { display: flex; flex-wrap: wrap; gap: 3px; padding: 6px 8px 0; }
     .tab { font-family: var(--font); font-size: 18px; padding: 4px 7px; color: #b9c4e0; background: #22304f; border: 2px solid var(--lo); }
     .tab.sel { color: var(--gold); background: #3a4f80; border-color: var(--hi) var(--lo) var(--panel2) var(--hi); }
+    .pvbox { display: flex; justify-content: center; padding: 6px 0 2px; background: #22304f; border-bottom: 2px solid var(--lo); }
+    #preview { position: static; width: 132px; height: 132px; image-rendering: pixelated; border: 3px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+    .wtabs { display: flex; gap: 3px; }
     .wsec { font-size: 19px; color: var(--gold); margin-top: 4px; }
     .wrow { display: flex; flex-wrap: wrap; gap: 4px; }
     .wopt { font-family: var(--font); font-size: 18px; padding: 4px 8px; color: var(--text); background: var(--panel2); border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
@@ -171,7 +174,8 @@
 
   <div id="wardrobe" class="modal" hidden>
     <div class="win bevel">
-      <div class="tbar"><span>Armario · <span id="wardrobe-money">◎ 0</span></span><button id="wardrobe-close">✕</button></div>
+      <div class="tbar"><span><span id="wardrobe-title">Armario</span> · <span id="wardrobe-money">◎ 0</span></span><button id="wardrobe-close">✕</button></div>
+      <div class="pvbox"><canvas id="preview" width="96" height="96"></canvas></div>
       <div class="body" id="wardrobe-body"></div>
     </div>
   </div>
@@ -183,6 +187,7 @@
         <button id="btn-eyes" class="rbtn">Seguir ojos</button>
         <p style="margin:0 2px;font-size:16px;color:#b9c4e0"><span class="dot" id="eye-dot2"></span>Verde: te está viendo por la cámara frontal.</p>
         <button id="btn-depth" class="rbtn">Efecto 3D</button>
+        <button id="btn-looks" class="rbtn">Cambiar apariencia</button>
         <button id="btn-level" class="rbtn">Nivelar el móvil</button>
         <button id="btn-sound" class="rbtn">Sonido</button>
         <button id="btn-speed" class="rbtn">Ritmo de vida</button>
@@ -205,6 +210,7 @@
           <li>De vez en cuando <b>llaman a la puerta</b>.</li>
         </ul>
         <label>Nombre de tu humano<input id="name-input" maxlength="14" placeholder="Nico" autocomplete="off"></label>
+        <button id="btn-looks-intro" class="rbtn" style="font-size:19px">Personalizar su aspecto</button>
         <button id="btn-start" class="rbtn gold">Empezar (con cámara 3D)</button>
         <button id="btn-start-nocam" class="rbtn">Empezar sin cámara</button>
         <button id="btn-new" class="rbtn" hidden style="font-size:18px">Partida nueva</button>
@@ -214,6 +220,6 @@
     </div>
   </div>
 
-  <script type="module" src="habitacion.js?v=3"></script>
+  <script type="module" src="habitacion.js?v=4"></script>
 </body>
 </html>
