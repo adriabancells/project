@@ -83,6 +83,24 @@
       border: 3px solid; border-color: #d6a04a #3a2408 #3a2408 #d6a04a; }
     .item button:disabled { opacity: .4; }
     #settings .body .rbtn { width: 100%; text-align: left; }
+    #shop-tabs { display: flex; flex-wrap: wrap; gap: 3px; padding: 6px 8px 0; }
+    .tab { font-family: var(--font); font-size: 18px; padding: 4px 7px; color: #b9c4e0; background: #22304f; border: 2px solid var(--lo); }
+    .tab.sel { color: var(--gold); background: #3a4f80; border-color: var(--hi) var(--lo) var(--panel2) var(--hi); }
+    .wsec { font-size: 19px; color: var(--gold); margin-top: 4px; }
+    .wrow { display: flex; flex-wrap: wrap; gap: 4px; }
+    .wopt { font-family: var(--font); font-size: 18px; padding: 4px 8px; color: var(--text); background: var(--panel2); border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
+    .wopt.sel { color: var(--gold); background: #4a5f90; border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+    .wopt:disabled { opacity: .4; }
+    .sw { width: 30px; height: 26px; border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); padding: 0; }
+    .sw.sel { outline: 3px solid var(--gold); outline-offset: 1px; }
+    #pets { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; padding-top: 4px; border-top: 2px solid var(--lo); }
+    #pets[hidden] { display: none; }
+    .petrow { display: grid; grid-template-columns: 1.3fr auto 1fr auto 1fr; align-items: center; gap: 5px; font-size: 17px; line-height: 1; }
+    .petrow .pn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--gold); }
+    .petrow .pl { font-size: 12px; }
+    .petrow .bar { height: 9px; background: var(--lo); border: 2px solid #000; position: relative; }
+    .petrow .bar b { position: absolute; left: 0; top: 0; bottom: 0; width: 50%; background: #5fd35f; }
+    #actmenu .msub { font-size: 16px; color: #b9c4e0; padding: 0 4px 2px; }
 
     #toast { position: fixed; z-index: 8; left: 50%; top: 64px; transform: translate(-50%, -12px); max-width: calc(100% - 24px); padding: 6px 12px;
       font-size: 20px; line-height: 1.05; text-align: center; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
@@ -136,7 +154,7 @@
 
   <canvas id="view"></canvas>
 
-  <div id="panel" class="bevel"><div id="needs"></div></div>
+  <div id="panel" class="bevel"><div id="needs"></div><div id="pets" hidden></div></div>
 
   <div id="actmenu" class="bevel" hidden></div>
   <div id="toast" class="bevel"></div>
@@ -146,7 +164,15 @@
   <div id="shop" class="modal" hidden>
     <div class="win bevel">
       <div class="tbar"><span>Catálogo · <span id="shop-money">◎ 0</span></span><button id="shop-close">✕</button></div>
+      <div id="shop-tabs"></div>
       <div class="body" id="shop-list"></div>
+    </div>
+  </div>
+
+  <div id="wardrobe" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span>Armario · <span id="wardrobe-money">◎ 0</span></span><button id="wardrobe-close">✕</button></div>
+      <div class="body" id="wardrobe-body"></div>
     </div>
   </div>
 
@@ -175,6 +201,7 @@
           <li><b>Toca un objeto</b> para mandarle hacer algo: comer, dormir, ducharse, trabajar…</li>
           <li>Gana <b>monedas ◎</b> trabajando en el ordenador y <b>compra</b> muebles nuevos.</li>
           <li>Tócalo para hacerle cosquillas; mantén para cogerlo. Inclina el móvil: todo resbala.</li>
+          <li>Cámbiale la <b>ropa</b> en el armario y adopta <b>mascotas</b>.</li>
           <li>De vez en cuando <b>llaman a la puerta</b>.</li>
         </ul>
         <label>Nombre de tu humano<input id="name-input" maxlength="14" placeholder="Nico" autocomplete="off"></label>
@@ -187,6 +214,6 @@
     </div>
   </div>
 
-  <script type="module" src="habitacion.js?v=2"></script>
+  <script type="module" src="habitacion.js?v=3"></script>
 </body>
 </html>
