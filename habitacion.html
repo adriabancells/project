@@ -3,71 +3,114 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#ebe4da">
+  <meta name="theme-color" content="#1d2b4a">
   <title>Atrapado</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
   <style>
-    :root { --ink: #3a332d; --muted: #8a8077; --paper: #f6f2ec; --accent: #d9826b; }
+    :root {
+      --panel: #1d2b4a; --panel2: #2a3d66; --hi: #6f8fd0; --lo: #0d1528; --text: #f4ecd2; --gold: #ffd75a; --ink: #241c14;
+      --font: "VT323", ui-monospace, "Courier New", monospace;
+    }
     * { box-sizing: border-box; }
     html, body {
-      margin: 0; height: 100%; overflow: hidden; background: #ebe4da; color: var(--ink);
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      -webkit-tap-highlight-color: transparent; touch-action: none;
-      -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+      margin: 0; height: 100%; overflow: hidden; background: #2b2433; color: var(--text); font-family: var(--font);
+      -webkit-tap-highlight-color: transparent; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
     }
-    canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
+    canvas { display: block; position: fixed; left: 0; width: 100%; image-rendering: pixelated; image-rendering: crisp-edges; }
     canvas.shake { animation: shake .28s linear; }
-    @keyframes shake {
-      0%,100% { transform: translate(0,0); } 20% { transform: translate(-3px,2px); }
-      40% { transform: translate(3px,-2px); } 60% { transform: translate(-2px,-1px); } 80% { transform: translate(2px,1px); }
-    }
+    @keyframes shake { 0%,100% { transform: translate(0,0); } 25% { transform: translate(-4px,2px); } 50% { transform: translate(4px,-2px); } 75% { transform: translate(-2px,1px); } }
 
-    #intro {
-      position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
-      padding: 16px; background: radial-gradient(circle at 50% 30%, #fbf8f3 0%, #e7dfd3 75%); overflow-y: auto;
-    }
-    #intro[hidden] { display: none; }
-    .card { width: 100%; max-width: 380px; text-align: center; }
-    .logo { width: 120px; height: 150px; margin: 0 auto 18px; position: relative; border-radius: 22px;
-      background: linear-gradient(#f3eee7, #e2d8ca); box-shadow: inset 0 0 0 10px #f7f3ee, inset 0 0 18px 10px rgba(0,0,0,.08), 0 14px 40px rgba(80,60,40,.18); }
-    .logo i { position: absolute; left: 50%; top: 52%; width: 22px; height: 22px; margin: -11px; border-radius: 50%;
-      background: #fff; box-shadow: 3px 5px 0 rgba(0,0,0,.08); animation: bob 2.4s ease-in-out infinite; }
-    .logo i::before, .logo i::after { content: ""; position: absolute; top: 9px; width: 3px; height: 3px; border-radius: 50%; background: var(--ink); }
-    .logo i::before { left: 6px; } .logo i::after { right: 6px; }
-    @keyframes bob { 0%,100% { transform: translate(-14px, 6px); } 50% { transform: translate(14px, -8px); } }
-    h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -.5px; }
-    .card p { margin: 0 0 14px; color: var(--muted); line-height: 1.45; font-size: 15px; }
-    .card ul { text-align: left; margin: 0 auto 22px; padding: 0 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.55; max-width: 320px; }
-    .card b { color: var(--ink); font-weight: 600; }
+    /* Paneles con bisel, estilo de interfaz de los 90 */
+    .bevel { background: var(--panel); border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); box-shadow: 0 0 0 2px #000; }
     button { font: inherit; cursor: pointer; }
-    .primary, .secondary { display: block; width: 100%; max-width: 320px; margin: 0 auto 10px; padding: 14px 18px; border-radius: 14px; border: 0; font-size: 16px; font-weight: 600; }
-    .primary { background: var(--ink); color: #fff; }
-    .secondary { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px rgba(58,51,45,.25); }
-    .back { display: inline-block; margin-top: 8px; color: var(--muted); font-size: 13px; }
-    #status { min-height: 1.2em; font-size: 13px; color: var(--accent); margin-top: 8px; }
+    .rbtn { font-family: var(--font); font-size: 20px; line-height: 1; color: var(--text); padding: 6px 10px; background: var(--panel2);
+      border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); border-radius: 0; }
+    .rbtn:active { border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+    .rbtn:disabled { opacity: .45; }
+    .rbtn.gold { background: #8a5a12; color: var(--gold); }
 
-    #hud { position: fixed; z-index: 5; top: max(10px, env(safe-area-inset-top)); left: 0; right: 0; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
-    #hud[hidden] { display: none; }
-    #hud button { pointer-events: auto; border: 0; border-radius: 999px; padding: 7px 11px; font-size: 12px; font-weight: 600; color: var(--ink);
-      background: rgba(255,255,255,.55); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 2px 8px rgba(0,0,0,.08); }
-    #hud button.on { background: rgba(58,51,45,.85); color: #fff; }
-    #hud .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #b9afa5; margin-right: 5px; vertical-align: 1px; }
-    #hud .dot.track { background: #59c27a; box-shadow: 0 0 6px #59c27a; }
-    #hud .dot.load { background: #e5b14a; }
+    #topbar { position: fixed; z-index: 6; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 6px;
+      padding: calc(env(safe-area-inset-top) + 5px) 8px 5px; font-size: 21px; line-height: 1; }
+    #topbar .rbtn { padding: 6px 8px; }
+    #topbar .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    #hud-name { color: var(--gold); font-size: 23px; }
+    #hud-mood { font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #hud-day { font-size: 16px; color: #b9c4e0; margin-left: 8px; }
+    #hud-money { color: var(--gold); font-size: 22px; padding: 3px 6px; background: var(--lo); border: 2px solid #000; white-space: nowrap; }
 
-    #bubble { position: fixed; z-index: 4; left: 0; top: 0; padding: 6px 10px; border-radius: 12px; background: #fff; color: var(--ink);
-      font-size: 13px; font-weight: 700; white-space: nowrap; pointer-events: none; box-shadow: 0 4px 14px rgba(0,0,0,.12);
-      opacity: 0; transition: opacity .18s; will-change: transform; }
-    #bubble::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 10px; height: 10px; margin-left: -5px; background: #fff; transform: rotate(45deg); border-radius: 2px; }
-    #bubble.show { opacity: 1; }
+    #panel { position: fixed; z-index: 6; left: 0; right: 0; bottom: 0; padding: 6px 8px calc(env(safe-area-inset-bottom) + 6px); }
+    #needs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px 8px; }
+    .need { display: flex; flex-direction: column; gap: 2px; font-size: 17px; line-height: 1; }
+    .need .nl { white-space: nowrap; overflow: hidden; }
+    .need i { font-style: normal; font-size: 13px; margin-right: 3px; }
+    .need .bar { height: 10px; background: var(--lo); border: 2px solid #000; position: relative; }
+    .need .bar b { position: absolute; left: 0; top: 0; bottom: 0; width: 50%; background: #5fd35f;
+      background-image: linear-gradient(90deg, transparent 0 75%, rgba(0,0,0,.25) 75%); background-size: 6px 100%; }
+    .need.alert .bar { animation: blink .6s steps(2) infinite; }
+    @keyframes blink { 50% { border-color: #ff4d3a; } }
 
-    .ripple { position: fixed; z-index: 3; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; pointer-events: none;
-      border: 2px solid rgba(58,51,45,.35); animation: ripple .55s ease-out forwards; }
+    .bubble { position: fixed; z-index: 4; left: 0; top: 0; padding: 3px 8px 4px; background: #fffbe8; color: var(--ink); border: 2px solid #000;
+      font-size: 19px; line-height: 1; white-space: nowrap; pointer-events: none; opacity: 0; will-change: transform; box-shadow: 3px 3px 0 rgba(0,0,0,.35); }
+    .bubble::after { content: ""; position: absolute; left: 50%; bottom: -8px; margin-left: -4px; border: 4px solid transparent; border-top-color: #000; border-left-color: #000; }
+    .bubble.thought { border-radius: 14px; }
+    .bubble.thought::after { width: 6px; height: 6px; border: 2px solid #000; background: #fffbe8; border-radius: 50%; bottom: -10px; }
+    .bubble.show { opacity: 1; }
+
+    #actmenu { position: fixed; z-index: 9; min-width: 200px; max-width: 86vw; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+    #actmenu[hidden] { display: none; }
+    #actmenu .mtitle { font-size: 22px; color: var(--gold); padding: 2px 4px 4px; border-bottom: 2px solid var(--lo); margin-bottom: 2px; }
+    #actmenu button { font-family: var(--font); font-size: 21px; text-align: left; color: var(--text); padding: 6px 10px; background: var(--panel2);
+      border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
+    #actmenu button:active { border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+    #actmenu button:disabled { opacity: .45; }
+    #actmenu button.minor { font-size: 18px; background: #22304f; color: #b9c4e0; }
+
+    .modal { position: fixed; z-index: 10; inset: 0; display: flex; align-items: center; justify-content: center; padding: 14px; background: rgba(10,8,20,.55); }
+    .modal[hidden] { display: none; }
+    .modal .win { width: 100%; max-width: 400px; max-height: 88vh; display: flex; flex-direction: column; }
+    .win .tbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 4px 10px; background: linear-gradient(90deg, #4058a0, #2a3d66); font-size: 24px; color: var(--gold); }
+    .win .tbar button { font-family: var(--font); font-size: 20px; width: 34px; height: 30px; padding: 0; color: var(--text); background: var(--panel2);
+      border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
+    .win .body { padding: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .item { display: flex; align-items: center; gap: 8px; padding: 6px; background: #22304f; border: 2px solid var(--lo); }
+    .item .ic { font-size: 26px; width: 34px; text-align: center; }
+    .item .nm { flex: 1; font-size: 21px; line-height: 1; }
+    .item small { color: #b9c4e0; font-size: 16px; }
+    .item .ds { display: block; margin-top: 2px; }
+    .item button { font-family: var(--font); font-size: 21px; min-width: 70px; color: var(--gold); background: #8a5a12; padding: 6px 8px;
+      border: 3px solid; border-color: #d6a04a #3a2408 #3a2408 #d6a04a; }
+    .item button:disabled { opacity: .4; }
+    #settings .body .rbtn { width: 100%; text-align: left; }
+
+    #toast { position: fixed; z-index: 8; left: 50%; top: 64px; transform: translate(-50%, -12px); max-width: calc(100% - 24px); padding: 6px 12px;
+      font-size: 20px; line-height: 1.05; text-align: center; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+    #toast.show { opacity: 1; transform: translate(-50%, 0); }
+    #tip { position: fixed; z-index: 5; left: 50%; bottom: 96px; transform: translateX(-50%); width: calc(100% - 28px); max-width: 380px; padding: 6px 10px;
+      font-size: 18px; line-height: 1.1; text-align: center; pointer-events: none; transition: opacity .8s; }
+    #tip.hide { opacity: 0; }
+    .ripple { position: fixed; z-index: 3; width: 44px; height: 44px; margin: -22px 0 0 -22px; pointer-events: none; border: 3px dashed rgba(255,215,90,.9); animation: ripple .45s steps(5) forwards; }
     @keyframes ripple { from { transform: scale(.2); opacity: 1; } to { transform: scale(1); opacity: 0; } }
 
-    #tip { position: fixed; z-index: 5; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: calc(100% - 32px); max-width: 360px;
-      padding: 10px 14px; border-radius: 14px; background: rgba(255,255,255,.7); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-      font-size: 13px; line-height: 1.45; color: var(--ink); text-align: center; pointer-events: none; transition: opacity .8s; }
-    #tip.hide { opacity: 0; }
+    .dot { display: inline-block; width: 9px; height: 9px; background: #6a6a7a; border: 1px solid #000; margin-right: 6px; vertical-align: 1px; }
+    .dot.on { background: #e6c84a; } .dot.load { background: #e6984a; } .dot.track { background: #5fd35f; box-shadow: 0 0 6px #5fd35f; }
+
+    #intro { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 14px; overflow-y: auto;
+      background: rgba(20,14,30,.72); }
+    #intro[hidden] { display: none; }
+    #intro .win { max-width: 390px; }
+    #intro h1 { margin: 0; font-weight: normal; font-size: 46px; color: var(--gold); text-shadow: 3px 3px 0 #000; text-align: center; letter-spacing: 1px; }
+    #intro .sub { text-align: center; font-size: 20px; color: #b9c4e0; margin: -2px 0 6px; }
+    #intro p { margin: 0; font-size: 19px; line-height: 1.1; }
+    #intro ul { margin: 0; padding-left: 18px; font-size: 18px; line-height: 1.1; color: #dfe6f6; }
+    #intro li { margin-bottom: 3px; }
+    #intro b { color: var(--gold); font-weight: normal; }
+    #intro label { font-size: 20px; }
+    #name-input { width: 100%; margin-top: 4px; font-family: var(--font); font-size: 24px; padding: 6px 8px; color: var(--ink); background: #fffbe8; border: 3px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); border-radius: 0; }
+    #intro .rbtn { width: 100%; padding: 10px; font-size: 22px; }
+    #intro .small { font-size: 15px; color: #9aa6c4; text-align: center; }
+    #intro a { color: #9aa6c4; font-size: 16px; text-align: center; }
 
     #cam { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: 0; top: 0; }
   </style>
@@ -81,38 +124,69 @@
   </script>
 </head>
 <body>
+  <div id="topbar" class="bevel">
+    <div class="who">
+      <span style="white-space:nowrap;overflow:hidden"><span id="hud-name">Nico</span><span id="hud-day">Día 1</span></span>
+      <span id="hud-mood">☺ Bien</span>
+    </div>
+    <span id="hud-money">◎ 150</span>
+    <button id="btn-shop" class="rbtn gold">Tienda</button>
+    <button id="btn-menu" class="rbtn" aria-label="Opciones"><span class="dot" id="eye-dot"></span>☰</button>
+  </div>
+
   <canvas id="view"></canvas>
-  <div id="bubble"></div>
+
+  <div id="panel" class="bevel"><div id="needs"></div></div>
+
+  <div id="actmenu" class="bevel" hidden></div>
+  <div id="toast" class="bevel"></div>
+  <div id="tip" class="bevel hide"></div>
   <video id="cam" playsinline muted></video>
 
-  <div id="hud" hidden>
-    <button id="btn-eyes"><span class="dot" id="eye-dot"></span>Ojos</button>
-    <button id="btn-level">Nivelar</button>
-    <button id="btn-depth">3D ×1.6</button>
-    <button id="btn-sound" class="on">Sonido</button>
-  </div>
-  <div id="tip" class="hide"></div>
-
-  <div id="intro">
-    <div class="card">
-      <div class="logo" aria-hidden="true"><i></i></div>
-      <h1>Atrapado</h1>
-      <p>Alguien vive dentro de tu móvil. Su habitación está justo debajo del cristal.</p>
-      <ul>
-        <li><b>Inclina</b> el móvil: todo resbala por la habitación.</li>
-        <li><b>Toca</b> al humano para hacerle cosquillas; <b>mantén</b> para cogerlo y <b>lánzalo</b>.</li>
-        <li><b>Arrastra</b> los muebles. Doble toque los gira. Toca la lámpara.</li>
-        <li>Toca el suelo y irá allí. Mantén el dedo y vendrá a tocarlo.</li>
-        <li>La <b>cámara frontal</b> sigue tus ojos para que la profundidad cambie según miras.</li>
-      </ul>
-      <button id="btn-start" class="primary">Entrar con cámara 3D</button>
-      <button id="btn-start-nocam" class="secondary">Entrar sin cámara</button>
-      <p id="status"></p>
-      <p style="font-size:12px">La imagen de la cámara se procesa solo en tu móvil; no se envía a ningún sitio.</p>
-      <a class="back" href="index.html">← Otros experimentos</a>
+  <div id="shop" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span>Catálogo · <span id="shop-money">◎ 0</span></span><button id="shop-close">✕</button></div>
+      <div class="body" id="shop-list"></div>
     </div>
   </div>
 
-  <script type="module" src="habitacion.js?v=1"></script>
+  <div id="settings" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span>Opciones</span><button id="settings-close">✕</button></div>
+      <div class="body">
+        <button id="btn-eyes" class="rbtn">Seguir ojos</button>
+        <p style="margin:0 2px;font-size:16px;color:#b9c4e0"><span class="dot" id="eye-dot2"></span>Verde: te está viendo por la cámara frontal.</p>
+        <button id="btn-depth" class="rbtn">Efecto 3D</button>
+        <button id="btn-level" class="rbtn">Nivelar el móvil</button>
+        <button id="btn-sound" class="rbtn">Sonido</button>
+        <button id="btn-speed" class="rbtn">Ritmo de vida</button>
+        <button id="btn-reset" class="rbtn" style="color:#ff9f8f">Borrar partida</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="intro">
+    <div class="win bevel">
+      <div class="body" style="gap:10px">
+        <h1>ATRAPADO</h1>
+        <div class="sub">una vida entera dentro de tu móvil</div>
+        <p>Alguien vive debajo del cristal de tu pantalla. Tiene hambre, sueño, ganas de jugar… y te necesita.</p>
+        <ul>
+          <li><b>Toca un objeto</b> para mandarle hacer algo: comer, dormir, ducharse, trabajar…</li>
+          <li>Gana <b>monedas ◎</b> trabajando en el ordenador y <b>compra</b> muebles nuevos.</li>
+          <li>Tócalo para hacerle cosquillas; mantén para cogerlo. Inclina el móvil: todo resbala.</li>
+          <li>De vez en cuando <b>llaman a la puerta</b>.</li>
+        </ul>
+        <label>Nombre de tu humano<input id="name-input" maxlength="14" placeholder="Nico" autocomplete="off"></label>
+        <button id="btn-start" class="rbtn gold">Empezar (con cámara 3D)</button>
+        <button id="btn-start-nocam" class="rbtn">Empezar sin cámara</button>
+        <button id="btn-new" class="rbtn" hidden style="font-size:18px">Partida nueva</button>
+        <p class="small">La cámara frontal sigue tus ojos para dar profundidad. La imagen se procesa solo en tu móvil.</p>
+        <a href="index.html">← Otros experimentos</a>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="habitacion.js?v=2"></script>
 </body>
 </html>

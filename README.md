@@ -1,14 +1,22 @@
 # Atrapado (`habitacion.html`)
 
-Un pequeño humano minimalista vive **dentro de la pantalla del móvil**. La pantalla es el cristal de una habitación que se ve desde arriba, con profundidad 3D real: sofá, sillas, mesa, lámpara, estantería y plantas.
+Un pequeño simulador de vida retro **dentro de la pantalla del móvil**: la pantalla es el cristal de una habitación que se ve desde arriba, con profundidad 3D real. Gráficos de píxel gordo con paleta reducida y tramado, interfaz de paneles biselados al estilo de los juegos de los 90.
 
-- **Inclinación del móvil** → todo resbala: los muebles (cada uno con su peso y rozamiento), y el humano primero se inclina para compensar, luego tropieza y al final se cae. Al sacudir el móvil, todo salta. El botón *Nivelar* fija la posición actual como "plana".
-- **Seguimiento de ojos** (cámara frontal + MediaPipe Face Landmarker): se estima la posición de tus ojos (incluida la distancia, a partir de la separación de las pupilas) y se usa una **proyección off-axis**, de modo que la pantalla se comporta como una ventana real. Botón *3D* para exagerar el efecto (×1, ×1.6, ×2.4). Sin cámara, la perspectiva sigue la inclinación.
-- **Con el dedo**: tocar al humano = cosquillas (si insistes se enfada y huye); mantener = cogerlo, y al soltar lo **lanzas** (puede chocar con las paredes… o con tu pantalla). Arrastrar muebles, doble toque para girarlos, tocar la lámpara para encenderla. Tocar el suelo: va allí. Mantener el dedo en el suelo: viene a tocarlo.
-- **Vida propia**: pasea, se sienta en sillas y sofá, se echa la siesta, enciende la lámpara, intenta abrir la puerta (cerrada), y si te ve te saluda o te pide que lo saques de allí.
-- Sonido sintetizado con Web Audio (voz tipo "bla-bla", golpes, clics).
+**Cuidar al humano (tipo Tamagotchi)**
+- Seis necesidades que bajan con el tiempo: **Hambre, Energía, Diversión, Higiene, Vejiga y Social**. El ánimo general sale de ellas.
+- **Toca cualquier objeto** para ver qué puede hacer con él: comer de la nevera (y sentarse a la mesa con el plato), dormir o echar la siesta, ducharse, ir al váter, trabajar o jugar en el ordenador, ver la tele, bailar, jugar a la pelota, leer, mirar los peces… También puedes girar o vender el objeto.
+- Si no le dices nada, decide solo según lo que más necesita. Si lo descuidas: se queja, huele (rayitas verdes), se duerme en el suelo, puede tener un "accidente" (toca el charco para limpiarlo) y se niega a trabajar si está de muy mal humor.
+- **Dinero ◎**: trabajando en el ordenador, con regalos de las visitas y una paga diaria. La comida cuesta dinero.
+- **Tienda**: tele, sofá, equipo de música, pelota, estantería, pecera, plantas, lámparas, sillas…
+- **Visitas**: de vez en cuando suena el timbre, se abre la puerta y entra alguien (cada visita tiene su aspecto y su voz). Charlan, usan tus cosas (¡y se comen tu comida!) y se van. Si apesta o si lanzas a la visita por los aires, se va antes.
+- La partida se guarda en el móvil; mientras no estás, el tiempo pasa más despacio y nunca lo deja en las últimas. Opción de ritmo de vida lento / normal / rápido.
 
-Funciona en iPhone (Safari pide permiso para el movimiento y la cámara) y Android. En el ordenador: flechas para inclinar, ratón para la perspectiva. Ficheros: `habitacion.html` + `habitacion.js` (Three.js y MediaPipe desde CDN). Hace falta HTTPS para la cámara y los sensores.
+**Física y 3D**
+- **Inclinación del móvil** → todo resbala; el humano se inclina, tropieza y se cae. Sacudir el móvil = terremoto. *Nivelar* fija la posición actual como "plana".
+- **Seguimiento de ojos** (cámara frontal + MediaPipe Face Landmarker) con **proyección off-axis**: la pantalla se comporta como una ventana real. Además, si te ve, te saluda y su necesidad social sube.
+- Con el dedo: tocar al humano = cosquillas; mantener = cogerlo y lanzarlo; arrastrar muebles; tocar el suelo para que vaya; mantener el dedo en el suelo para que venga a tocarlo.
+
+En el ordenador: clic en los objetos, flechas para inclinar y ratón para la perspectiva. Ficheros: `habitacion.html` + `habitacion.js` (Three.js y MediaPipe desde CDN). Hace falta HTTPS para la cámara y los sensores.
 
 ---
 

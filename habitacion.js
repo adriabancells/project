@@ -1,13 +1,13 @@
 // Atrapado: un pequeño humano vive dentro de la pantalla del móvil.
-// La pantalla es el cristal de una habitación que se ve desde arriba. La inclinación del móvil
-// mueve el humano y los muebles; la cámara frontal sigue tus ojos para ajustar la perspectiva
-// (proyección "off-axis": la pantalla se comporta como una ventana real).
+// Simulador de vida retro en una sola habitación: la pantalla es el cristal de la habitación vista
+// desde arriba. Necesidades (hambre, energía, diversión, higiene, vejiga, social), dinero, tienda,
+// visitas, inclinación del móvil y seguimiento de los ojos con la cámara frontal (proyección off-axis).
 
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
 const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const SAVE_KEY = 'atrapado.v2';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -22,133 +22,180 @@ const HALF_PI = Math.PI / 2;
 const isTouch = matchMedia('(pointer: coarse)').matches;
 const PX_PER_CM = isTouch ? 60 : 38; // píxeles CSS por centímetro (aprox.)
 
-// Física (unidades del mundo: el lado corto de la pantalla mide 1)
+// Física (unidades del mundo: el lado corto de la habitación mide 1)
 const G = 3.6;        // aceleración por inclinación
 const GZ = 4.2;       // gravedad vertical (hacia el suelo)
-const H_R = 0.034;    // radio del humano
-const HUMAN_H = 0.3;  // altura del humano
+const H_R = 0.034;    // radio de un humano
+const HUMAN_H = 0.3;  // altura de un humano
 
 /* =====================================================================
- *  Render
+ *  Render retro: escena a baja resolución + paleta reducida con tramado
  * ===================================================================== */
 const canvas = $('view');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(1);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.type = THREE.BasicShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#e9e2d8');
+scene.background = new THREE.Color('#2b2433');
 const camera = new THREE.PerspectiveCamera();
 
-let W = 1, H = 2, D = 0.9, CM_PER_UNIT = 6.5;
+let rt = null;
+const post = (() => {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { tDiffuse: { value: null }, levels: { value: 22 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `
+      uniform sampler2D tDiffuse; uniform float levels; varying vec2 vUv;
+      float b2(vec2 v){ return mod(v.x * 2.0 + v.y * 3.0, 4.0); }
+      float bayer4(vec2 p){ p = floor(mod(p, 4.0)); return (4.0 * b2(mod(p, 2.0)) + b2(floor(p / 2.0))) / 16.0; }
+      vec3 toSRGB(vec3 c){ return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+      void main(){
+        vec3 c = toSRGB(clamp(texture2D(tDiffuse, vUv).rgb, 0.0, 1.0));
+        float d = bayer4(gl_FragCoord.xy) - 0.47;
+        c = floor(c * levels + 0.5 + d) / levels;
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  const s = new THREE.Scene(); s.add(quad);
+  return { mat, scene: s, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
+})();
 
-const hemi = new THREE.HemisphereLight('#ffffff', '#cbbca8', 1.25);
-hemi.position.set(0, 0, 1);
-scene.add(hemi);
-const sun = new THREE.DirectionalLight('#fff4e6', 1.7);
-sun.position.set(0.35, 0.55, 3);
+const sun = new THREE.DirectionalLight('#fff1d8', 2.0);
+sun.position.set(0.4, 0.7, 3);
 sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.mapSize.set(512, 512);
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 5;
-sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 0.002;
-sun.shadow.radius = 3;
+sun.shadow.bias = -0.002;
 scene.add(sun, sun.target);
+const amb = new THREE.HemisphereLight('#fff6e8', '#7a6a5a', 1.35);
+amb.position.set(0, 0, 1);
+scene.add(amb);
 
 const matCache = new Map();
 function mat(color, opts = {}) {
   const key = color + JSON.stringify(opts);
-  if (!matCache.has(key)) matCache.set(key, new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...opts }));
+  if (!matCache.has(key)) matCache.set(key, new THREE.MeshLambertMaterial({ color, flatShading: true, ...opts }));
   return matCache.get(key);
 }
 function shadowed(m) { m.castShadow = true; m.receiveShadow = true; return m; }
-// Caja redondeada: w a lo largo de x, d a lo largo de y, h a lo largo de z (z = hacia el cristal)
-function rbox(w, d, h, color, x, y, z, r = 0.01) {
-  const m = new THREE.Mesh(new RoundedBoxGeometry(w, d, h, 3, Math.min(r, w / 2, d / 2, h / 2)), typeof color === 'string' ? mat(color) : color);
+// Caja: w a lo largo de x, d a lo largo de y, h a lo largo de z (z = hacia el cristal)
+function box(w, d, h, color, x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, d, h), typeof color === 'string' ? mat(color) : color);
   m.position.set(x, y, z);
   return shadowed(m);
 }
-function cyl(rt, rb, h, color, x, y, z, seg = 18) {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), typeof color === 'string' ? mat(color) : color);
+function cyl(rt0, rb, h, color, x, y, z, seg = 8) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt0, rb, h, seg), typeof color === 'string' ? mat(color) : color);
   m.rotation.x = HALF_PI;
   m.position.set(x, y, z);
   return shadowed(m);
 }
+function ball(r, color, x, y, z, detail = 1) {
+  const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r, detail), typeof color === 'string' ? mat(color) : color);
+  m.position.set(x, y, z);
+  return shadowed(m);
+}
 
-/* ---------- Texturas pintadas ---------- */
-function canvasTex(w, h, draw) {
+/* ---------- Texturas de píxel ---------- */
+function pixTex(w, h, draw, repeat = true) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  draw(c.getContext('2d'), w, h);
+  const g = c.getContext('2d');
+  draw(g, w, h);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
 }
-const floorTex = canvasTex(256, 512, (g, w, h) => {
-  g.fillStyle = '#e8dccb'; g.fillRect(0, 0, w, h);
-  const pw = 32;
-  for (let i = 0; i < w / pw; i++) {
-    const off = (i * 197) % h;
-    for (let k = -1; k < 2; k++) {
-      const shade = 225 + ((i * 37 + k * 11) % 9);
-      g.fillStyle = `rgb(${shade + 6},${shade - 6},${shade - 22})`;
-      g.fillRect(i * pw + 1, off + k * h * 0.5, pw - 2, h * 0.5 - 2);
-    }
-    g.fillStyle = 'rgba(120,95,70,.18)';
-    g.fillRect(i * pw, 0, 1.5, h);
-    g.fillRect(i * pw, off, pw, 1.5);
-    g.fillRect(i * pw, (off + h / 2) % h, pw, 1.5);
-  }
-});
-floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+const px = (g, c, x, y, w = 1, h = 1) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
 
-const rugTex = canvasTex(256, 192, (g, w, h) => {
-  g.fillStyle = '#c9d5c4'; roundRect(g, 4, 4, w - 8, h - 8, 26); g.fill();
-  g.strokeStyle = '#eef2ea'; g.lineWidth = 5; roundRect(g, 18, 18, w - 36, h - 36, 16); g.stroke();
-  g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 2; roundRect(g, 30, 30, w - 60, h - 60, 10); g.stroke();
-});
-const skyTex = canvasTex(64, 128, (g, w, h) => {
-  const gr = g.createLinearGradient(0, 0, 0, h);
-  gr.addColorStop(0, '#9fc7e8'); gr.addColorStop(1, '#e9f2f7');
-  g.fillStyle = gr; g.fillRect(0, 0, w, h);
-  g.fillStyle = 'rgba(255,255,255,.8)';
-  g.beginPath(); g.ellipse(22, 40, 14, 6, 0, 0, 7); g.ellipse(34, 37, 10, 6, 0, 0, 7); g.fill();
-});
-const artTex = canvasTex(128, 160, (g, w, h) => {
-  g.fillStyle = '#f7f3ec'; g.fillRect(0, 0, w, h);
-  g.fillStyle = '#d9826b'; g.beginPath(); g.arc(50, 64, 30, 0, 7); g.fill();
-  g.fillStyle = '#7b9cc0'; g.fillRect(60, 80, 44, 54);
-  g.fillStyle = '#e8c26a'; g.beginPath(); g.moveTo(20, 140); g.lineTo(60, 96); g.lineTo(96, 140); g.fill();
-});
-function roundRect(g, x, y, w, h, r) {
-  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
-  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+const TEX = {
+  wood: pixTex(32, 64, (g) => {
+    const cols = ['#b9824f', '#c48d58', '#ad7745', '#bf8a55'];
+    for (let i = 0; i < 4; i++) {
+      px(g, cols[i], i * 8, 0, 8, 64);
+      px(g, '#8a5a32', i * 8, 0, 1, 64);
+      const off = (i * 23) % 64;
+      px(g, '#8a5a32', i * 8, off, 8, 1);
+      px(g, '#d29a62', i * 8 + 3, (off + 20) % 64, 1, 6);
+    }
+  }),
+  wallpaper: pixTex(16, 16, (g) => {
+    px(g, '#e3cf9f', 0, 0, 16, 16);
+    px(g, '#d4bb85', 0, 0, 3, 16);
+    px(g, '#c9ad74', 1, 0, 1, 16);
+    px(g, '#b9575a', 9, 6, 1, 1); px(g, '#b9575a', 8, 7, 3, 1); px(g, '#b9575a', 9, 8, 1, 1);
+    px(g, '#6f8f5f', 9, 9, 1, 2);
+  }),
+  wainscot: pixTex(16, 16, (g) => {
+    px(g, '#7a4a3a', 0, 0, 16, 16);
+    px(g, '#8c5845', 1, 2, 6, 12); px(g, '#8c5845', 9, 2, 6, 12);
+    px(g, '#5f382b', 0, 0, 16, 1); px(g, '#a26a52', 0, 15, 16, 1);
+  }),
+  tiles: pixTex(16, 16, (g) => {
+    px(g, '#eef1f2', 0, 0, 16, 16);
+    px(g, '#7fb3cf', 0, 0, 8, 8); px(g, '#7fb3cf', 8, 8, 8, 8);
+    px(g, '#c9d6db', 0, 7, 16, 1); px(g, '#c9d6db', 7, 0, 1, 16);
+  }),
+  kitchen: pixTex(16, 16, (g) => {
+    px(g, '#e9dfc9', 0, 0, 16, 16);
+    px(g, '#c76b4c', 0, 0, 8, 8); px(g, '#c76b4c', 8, 8, 8, 8);
+    px(g, '#b4a68c', 0, 7, 16, 1); px(g, '#b4a68c', 7, 0, 1, 16);
+  }),
+  carpet: pixTex(32, 32, (g) => {
+    px(g, '#7d3f5b', 0, 0, 32, 32);
+    px(g, '#e3c26a', 1, 1, 30, 1); px(g, '#e3c26a', 1, 30, 30, 1); px(g, '#e3c26a', 1, 1, 1, 30); px(g, '#e3c26a', 30, 1, 1, 30);
+    for (let y = 6; y < 28; y += 8) for (let x = 6; x < 28; x += 8) { px(g, '#a8587a', x, y, 4, 4); px(g, '#e3c26a', x + 1, y + 1, 2, 2); }
+  }, false),
+  sky: pixTex(16, 16, (g) => {
+    for (let y = 0; y < 16; y++) px(g, `rgb(${120 + y * 6},${170 + y * 4},${220 + y * 2})`, 0, y, 16, 1);
+    px(g, '#ffffff', 3, 4, 5, 2); px(g, '#ffffff', 5, 3, 3, 1);
+  }, false),
+  art: pixTex(16, 20, (g) => {
+    px(g, '#f2ead8', 0, 0, 16, 20);
+    px(g, '#e88f3c', 3, 3, 6, 6); px(g, '#4f7fb5', 8, 9, 6, 8); px(g, '#6e9d55', 2, 12, 6, 6);
+  }, false),
+  blanket: pixTex(16, 16, (g) => {
+    px(g, '#4f78b0', 0, 0, 16, 16);
+    for (let i = 0; i < 16; i += 4) { px(g, '#6b93c8', i, 0, 2, 16); px(g, '#e6d27a', 0, i, 16, 1); }
+  }),
+  sofa: pixTex(8, 8, (g) => {
+    px(g, '#8f6a3e', 0, 0, 8, 8);
+    px(g, '#a17a4a', 0, 0, 4, 4); px(g, '#a17a4a', 4, 4, 4, 4);
+  }),
+};
+
+function texMat(tex, repeatX = 1, repeatY = 1) {
+  const t = tex.clone();
+  t.needsUpdate = true;
+  t.repeat.set(repeatX, repeatY);
+  return new THREE.MeshLambertMaterial({ map: t });
 }
 
 /* =====================================================================
  *  Habitación (suelo en z = 0, cristal/pantalla en z = D)
  * ===================================================================== */
+let W = 1, H = 2, D = 0.9, CM_PER_UNIT = 6.5;
 const room = new THREE.Group();
 scene.add(room);
-let doorX = 0.25;
+const door = { x: -0.05, hinge: null, open: 0, target: 0 };
 
-const wallMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, emissive: '#8f8579', emissiveIntensity: 0.55 });
-function wallMesh(geo, matrix) {
-  // Gradiente por vértice: más oscuro junto al suelo, más claro junto al cristal
-  geo.applyMatrix4(matrix);
-  const pos = geo.attributes.position;
-  const col = new Float32Array(pos.count * 3);
-  const a = new THREE.Color('#d9cebf'), b = new THREE.Color('#f7f3ee'), c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    c.copy(a).lerp(b, clamp(pos.getZ(i) / D, 0, 1) ** 0.8);
-    col.set([c.r, c.g, c.b], i * 3);
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const m = new THREE.Mesh(geo, wallMat);
+function wallPlane(len, matl, basisX, normal, pos) {
+  const geo = new THREE.PlaneGeometry(len, D);
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len / 0.11, uv.getY(i) * D / 0.11);
+  const m = new THREE.Mesh(geo, matl);
+  const Y = new THREE.Vector3(0, 0, 1);
+  m.matrixAutoUpdate = false;
+  m.matrix.makeBasis(basisX, Y, normal).setPosition(pos);
   m.receiveShadow = true;
   return m;
 }
@@ -156,125 +203,324 @@ function wallMesh(geo, matrix) {
 function buildRoom() {
   room.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
   room.clear();
-  const M = new THREE.Matrix4();
+  const wp = new THREE.MeshLambertMaterial({ map: TEX.wallpaper });
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  room.add(wallPlane(H, wp, V(0, 1, 0), V(1, 0, 0), V(-W / 2, 0, D / 2)));
+  room.add(wallPlane(H, wp, V(0, -1, 0), V(-1, 0, 0), V(W / 2, 0, D / 2)));
+  room.add(wallPlane(W, wp, V(-1, 0, 0), V(0, 1, 0), V(0, -H / 2, D / 2)));
+  room.add(wallPlane(W, wp, V(1, 0, 0), V(0, -1, 0), V(0, H / 2, D / 2)));
 
-  floorTex.repeat.set(W / 0.56, H / 1.1);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.85 }));
+  // Zócalo alto de madera (friso) y moldura
+  const wz = 0.1, t = 0.006;
+  const ws = (len) => texMat(TEX.wainscot, len / 0.08, 1);
+  room.add(box(t, H, wz, ws(H), -W / 2 + t / 2, 0, wz / 2));
+  room.add(box(t, H, wz, ws(H), W / 2 - t / 2, 0, wz / 2));
+  room.add(box(W, t, wz, ws(W), 0, -H / 2 + t / 2, wz / 2));
+  room.add(box(W, t, wz, ws(W), 0, H / 2 - t / 2, wz / 2));
+  const rail = '#5f382b';
+  room.add(box(0.012, H, 0.008, rail, -W / 2 + 0.006, 0, wz));
+  room.add(box(0.012, H, 0.008, rail, W / 2 - 0.006, 0, wz));
+  room.add(box(W, 0.012, 0.008, rail, 0, -H / 2 + 0.006, wz));
+  room.add(box(W, 0.012, 0.008, rail, 0, H / 2 - 0.006, wz));
+
+  // Suelo de madera + zonas: cocina (baldosas), baño (azulejos), alfombra
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, H), texMat(TEX.wood, W / 0.13, H / 0.26));
   floor.receiveShadow = true;
   room.add(floor);
+  const zone = (tex, w, h, x, y, tile) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), tile ? texMat(tex, w / tile, h / tile) : new THREE.MeshLambertMaterial({ map: tex }));
+    m.position.set(x, y, 0.0012);
+    m.receiveShadow = true;
+    room.add(m);
+  };
+  zone(TEX.kitchen, 0.36, 0.3, -W / 2 + 0.18, H / 2 - 0.15, 0.06);
+  zone(TEX.tiles, 0.34, 0.5, W / 2 - 0.17, H / 2 - 0.25, 0.05);
+  zone(TEX.carpet, 0.42, 0.34, W * 0.12, -H * 0.2, 0);
 
-  const seg = 1;
-  room.add(wallMesh(new THREE.PlaneGeometry(D, H, seg, seg), M.makeRotationY(HALF_PI).setPosition(-W / 2, 0, D / 2)));
-  room.add(wallMesh(new THREE.PlaneGeometry(D, H, seg, seg), M.makeRotationY(-HALF_PI).setPosition(W / 2, 0, D / 2)));
-  room.add(wallMesh(new THREE.PlaneGeometry(W, D, seg, seg), M.makeRotationX(-HALF_PI).setPosition(0, -H / 2, D / 2)));
-  room.add(wallMesh(new THREE.PlaneGeometry(W, D, seg, seg), M.makeRotationX(HALF_PI).setPosition(0, H / 2, D / 2)));
+  // Puerta con bisagra en la pared de arriba (se abre para las visitas)
+  door.x = clamp(-0.03, -W / 2 + 0.3, W / 2 - 0.3);
+  const dw = 0.15, dh = 0.3;
+  room.add(box(dw + 0.03, 0.012, dh + 0.02, '#f1e6d0', door.x, H / 2 - 0.004, (dh + 0.02) / 2));
+  room.add(box(dw, 0.004, dh, '#14100e', door.x, H / 2 - 0.01, dh / 2));
+  door.hinge = new THREE.Group();
+  door.hinge.position.set(door.x + dw / 2, H / 2 - 0.016, 0);
+  const panel = box(dw, 0.012, dh, '#9a6a44', -dw / 2, 0, dh / 2);
+  door.hinge.add(panel);
+  door.hinge.add(box(dw * 0.7, 0.004, dh * 0.3, '#86593a', -dw / 2, -0.007, dh * 0.7));
+  door.hinge.add(box(dw * 0.7, 0.004, dh * 0.3, '#86593a', -dw / 2, -0.007, dh * 0.3));
+  door.hinge.add(ball(0.009, '#e2c14a', -dw + 0.02, -0.012, 0.14, 0));
+  door.hinge.rotation.z = door.open;
+  room.add(door.hinge);
 
-  // Zócalos
-  const bb = '#f9f6f1', t = 0.008, bh = 0.022;
-  room.add(rbox(t, H, bh, bb, -W / 2 + t / 2, 0, bh / 2, 0.002));
-  room.add(rbox(t, H, bh, bb, W / 2 - t / 2, 0, bh / 2, 0.002));
-  room.add(rbox(W, t, bh, bb, 0, -H / 2 + t / 2, bh / 2, 0.002));
-  room.add(rbox(W, t, bh, bb, 0, H / 2 - t / 2, bh / 2, 0.002));
-
-  // Puerta (cerrada, claro) en la pared de arriba
-  doorX = clamp(W * 0.22, -W / 2 + 0.12, W / 2 - 0.12);
-  room.add(rbox(0.16, 0.012, 0.31, '#efe8de', doorX, H / 2 - 0.004, 0.155, 0.004));
-  room.add(rbox(0.14, 0.012, 0.29, '#d8c7b2', doorX, H / 2 - 0.007, 0.145, 0.004));
-  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.009, 12, 10), mat('#8c7a66', { metalness: 0.4, roughness: 0.4 }));
-  knob.position.set(doorX - 0.05, H / 2 - 0.018, 0.14);
-  room.add(shadowed(knob));
-
-  // Ventana en la pared derecha
-  const wy = H * 0.16;
-  room.add(rbox(0.012, 0.3, 0.24, '#fbfaf7', W / 2 - 0.004, wy, D * 0.5, 0.004));
-  const sky = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.2), new THREE.MeshBasicMaterial({ map: skyTex }));
-  sky.rotation.set(0, -HALF_PI, -HALF_PI);
-  sky.position.set(W / 2 - 0.011, wy, D * 0.5);
+  // Ventana en la pared izquierda
+  const wy = H * 0.05;
+  room.add(box(0.01, 0.32, 0.25, '#f1e6d0', -W / 2 + 0.004, wy, D * 0.55));
+  const sky = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.21), new THREE.MeshBasicMaterial({ map: TEX.sky }));
+  sky.matrixAutoUpdate = false;
+  sky.matrix.makeBasis(V(0, 1, 0), V(0, 0, 1), V(1, 0, 0)).setPosition(-W / 2 + 0.0095, wy, D * 0.55);
   room.add(sky);
-  room.add(rbox(0.014, 0.008, 0.2, '#fbfaf7', W / 2 - 0.012, wy, D * 0.5, 0.002));
-  room.add(rbox(0.03, 0.32, 0.012, '#fbfaf7', W / 2 - 0.015, wy, D * 0.5 - 0.125, 0.003));
+  room.add(box(0.014, 0.01, 0.21, '#f1e6d0', -W / 2 + 0.01, wy, D * 0.55));
+  room.add(box(0.014, 0.28, 0.01, '#f1e6d0', -W / 2 + 0.01, wy, D * 0.55));
+  room.add(box(0.03, 0.34, 0.012, '#f1e6d0', -W / 2 + 0.015, wy, D * 0.55 - 0.13));
 
-  // Cuadro en la pared izquierda
-  const ay = -H * 0.12;
-  room.add(rbox(0.01, 0.17, 0.21, '#3a332d', -W / 2 + 0.005, ay, D * 0.55, 0.003));
-  const art = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 0.19), new THREE.MeshStandardMaterial({ map: artTex, roughness: 0.9 }));
-  art.rotation.set(0, HALF_PI, HALF_PI);
-  art.position.set(-W / 2 + 0.0105, ay, D * 0.55);
+  // Cuadro en la pared derecha
+  const ay = -H * 0.3;
+  room.add(box(0.01, 0.15, 0.19, '#5f382b', W / 2 - 0.005, ay, D * 0.55));
+  const art = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.15), new THREE.MeshLambertMaterial({ map: TEX.art }));
+  art.matrixAutoUpdate = false;
+  art.matrix.makeBasis(V(0, -1, 0), V(0, 0, 1), V(-1, 0, 0)).setPosition(W / 2 - 0.0105, ay, D * 0.55);
   room.add(art);
 
-  // Alfombra
-  const rug = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.39), new THREE.MeshStandardMaterial({ map: rugTex, transparent: true, roughness: 1 }));
-  rug.position.set(0, H * 0.02, 0.0015);
-  rug.receiveShadow = true;
-  room.add(rug);
-
-  // Sombras: la cámara de sombras cubre la habitación
-  const sc = sun.shadow.camera;
-  const ext = Math.max(W, H) / 2 + 0.2;
+  const sc = sun.shadow.camera, ext = Math.max(W, H) / 2 + 0.25;
   sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext;
   sc.updateProjectionMatrix();
 }
 
 /* =====================================================================
- *  Muebles
+ *  Objetos: aspecto, colisión, asientos y acciones
  * ===================================================================== */
-const COL = {
-  sofa: '#d98a72', sofa2: '#e59c84', wood: '#c9a27e', woodDark: '#8d6e55', chair: '#7f9fc2',
-  white: '#fbf8f3', pot: '#c97b5a', leaf: '#7fae7b', leaf2: '#6a9a69', lamp: '#f3e5c8', metal: '#5c544c',
+// Cada acción: label, anim ('stand' | 'sit' | 'lie' | 'dance' | 'kick'), pose (detalle de los brazos),
+// dur (s), rates (necesidades/s y dinero/s mientras dura), adv (lo que "promete" a la IA),
+// seat(f) (para sentarse/tumbarse), spot(f) (dónde ponerse de pie), cost, visitor (si las visitas la usan).
+const C = {
+  wood: '#9b6a42', woodDark: '#6a4529', white: '#ece6da', cream: '#e8dcc0', metal: '#6b6a72',
+  red: '#c0504a', blue: '#4f78b0', green: '#5f9a55', yellow: '#e3c26a', black: '#2a2630',
 };
+const screenMat = () => new THREE.MeshBasicMaterial({ color: '#1d2a2a' });
 
 const DEFS = {
-  sofa: {
-    hx: 0.2, hy: 0.075, mass: 6, mus: 0.3,
+  fridge: {
+    name: 'Nevera', icon: '🧊', price: 280, hx: 0.055, hy: 0.045, mass: 8, mus: 0.45,
     build() {
       const g = new THREE.Group();
-      g.add(rbox(0.4, 0.14, 0.05, COL.sofa, 0, 0.005, 0.037, 0.014));
-      g.add(rbox(0.17, 0.115, 0.03, COL.sofa2, -0.088, 0.012, 0.074, 0.013));
-      g.add(rbox(0.17, 0.115, 0.03, COL.sofa2, 0.088, 0.012, 0.074, 0.013));
-      g.add(rbox(0.4, 0.038, 0.13, COL.sofa, 0, -0.056, 0.077, 0.016));
-      g.add(rbox(0.032, 0.15, 0.095, COL.sofa, -0.184, 0, 0.0555, 0.014));
-      g.add(rbox(0.032, 0.15, 0.095, COL.sofa, 0.184, 0, 0.0555, 0.014));
-      for (const [x, y] of [[-0.18, -0.06], [0.18, -0.06], [-0.18, 0.06], [0.18, 0.06]]) g.add(cyl(0.006, 0.005, 0.014, COL.woodDark, x, y, 0.007, 8));
+      g.add(box(0.11, 0.09, 0.27, C.white, 0, 0, 0.135));
+      g.add(box(0.112, 0.004, 0.003, '#b9b2a4', 0, 0.044, 0.18));
+      g.add(box(0.008, 0.008, 0.06, C.metal, -0.04, 0.048, 0.21));
+      g.add(box(0.008, 0.008, 0.05, C.metal, -0.04, 0.048, 0.11));
+      g.add(box(0.03, 0.002, 0.03, C.red, 0.025, 0.046, 0.22));
+      g.add(box(0.02, 0.002, 0.02, C.yellow, 0.02, 0.046, 0.12));
       return g;
     },
-    support(lx, ly) { if (Math.abs(lx) > 0.168) return 0.103; if (ly < -0.037) return 0.142; return 0.089; },
-    seats: [{ lx: -0.09, ly: 0.012, h: 0.089 }, { lx: 0.09, ly: 0.012, h: 0.089 }],
+    support: () => 0.28,
+    actions: [
+      { id: 'eat', label: 'Comer', cost: 6, anim: 'stand', pose: 'reach', dur: 1.5, adv: { hunger: 65 }, visitor: true, exclusive: true,
+        onEnd(a, interrupted) { if (!interrupted) a.startMeal(); } },
+      { id: 'snack', label: 'Picar algo', cost: 2, anim: 'stand', pose: 'eat', dur: 4, rates: { hunger: 5, fun: 0.5 }, adv: { hunger: 20 }, exclusive: true },
+    ],
   },
-  chair: {
-    hx: 0.043, hy: 0.043, mass: 1, mus: 0.2,
+  bed: {
+    name: 'Cama', icon: '🛏️', price: 220, hx: 0.1, hy: 0.17, mass: 9, mus: 0.5,
     build() {
       const g = new THREE.Group();
-      g.add(rbox(0.086, 0.086, 0.012, COL.chair, 0, 0, 0.073, 0.005));
-      for (const [x, y] of [[-0.035, -0.035], [0.035, -0.035], [-0.035, 0.035], [0.035, 0.035]]) g.add(cyl(0.0045, 0.0045, 0.068, COL.woodDark, x, y, 0.034, 8));
-      g.add(rbox(0.086, 0.012, 0.085, COL.chair, 0, -0.037, 0.122, 0.005));
+      g.add(box(0.2, 0.34, 0.05, C.wood, 0, 0, 0.035));
+      g.add(box(0.18, 0.31, 0.028, C.white, 0, 0.005, 0.072));
+      g.add(box(0.19, 0.2, 0.034, texMat(TEX.blanket, 2, 2), 0, 0.06, 0.077));
+      g.add(box(0.12, 0.055, 0.024, '#f4f0e6', 0, -0.12, 0.094));
+      g.add(box(0.2, 0.02, 0.13, C.woodDark, 0, -0.16, 0.065));
+      for (const [x, y] of [[-0.09, -0.16], [0.09, -0.16], [-0.09, 0.16], [0.09, 0.16]]) g.add(box(0.016, 0.016, 0.012, C.woodDark, x, y, 0.006));
       return g;
     },
-    support(lx, ly) { return ly < -0.03 ? 0.165 : 0.079; },
-    seats: [{ lx: 0, ly: 0.008, h: 0.079 }],
+    support: (lx, ly) => (ly < -0.148 ? 0.13 : 0.094),
+    actions: [
+      { id: 'sleep', label: 'Dormir', anim: 'lie', dur: 60, rates: { energy: 4.5 }, adv: { energy: 90 },
+        seat: () => ({ lx: 0, ly: 0.125, h: 0.09, face: HALF_PI }), until: (a) => a.needs && a.needs.energy >= 99.5 && a.act.t > 6 },
+      { id: 'nap', label: 'Siesta', anim: 'lie', dur: 10, rates: { energy: 3.5 }, adv: { energy: 30 },
+        seat: () => ({ lx: 0, ly: 0.125, h: 0.09, face: HALF_PI }) },
+    ],
+  },
+  toilet: {
+    name: 'Váter', icon: '🚽', price: 120, hx: 0.036, hy: 0.048, mass: 4, mus: 0.5,
+    build() {
+      const g = new THREE.Group();
+      g.add(cyl(0.022, 0.018, 0.04, C.white, 0, 0.008, 0.02, 10));
+      g.add(box(0.06, 0.07, 0.016, C.white, 0, 0.01, 0.048));
+      g.add(box(0.046, 0.05, 0.004, '#d9d4c8', 0, 0.012, 0.057));
+      g.add(box(0.07, 0.024, 0.075, C.white, 0, -0.036, 0.075));
+      g.add(box(0.012, 0.004, 0.006, C.metal, 0.02, -0.022, 0.1));
+      return g;
+    },
+    support: (lx, ly) => (ly < -0.022 ? 0.112 : 0.058),
+    actions: [
+      { id: 'pee', label: 'Usar', anim: 'sit', dur: 4.5, adv: { bladder: 100 }, visitor: true,
+        seat: () => ({ lx: 0, ly: 0.008, h: 0.058, face: HALF_PI }),
+        onEnd(a, interrupted) { if (!interrupted && a.needs) { a.needs.bladder = 100; a.needs.hygiene = Math.max(0, a.needs.hygiene - 3); } audio.flush(); } },
+    ],
+  },
+  shower: {
+    name: 'Ducha', icon: '🚿', price: 260, hx: 0.066, hy: 0.066, mass: 6, mus: 0.6,
+    build() {
+      const g = new THREE.Group();
+      g.add(box(0.132, 0.132, 0.012, '#e8eef0', 0, 0, 0.006));
+      g.add(box(0.1, 0.1, 0.002, '#a9c7d6', 0, 0, 0.013));
+      const glass = new THREE.MeshLambertMaterial({ color: '#bfe3f0', transparent: true, opacity: 0.35 });
+      const gx = box(0.004, 0.13, 0.28, glass, -0.064, 0, 0.14); gx.castShadow = false; g.add(gx);
+      const gy = box(0.13, 0.004, 0.28, glass, 0, 0.064, 0.14); gy.castShadow = false; g.add(gy);
+      g.add(box(0.006, 0.006, 0.3, C.metal, 0.058, -0.058, 0.15));
+      g.add(cyl(0.016, 0.01, 0.01, C.metal, 0.045, -0.045, 0.29, 8));
+      return g;
+    },
+    support: () => 0.012,
+    actions: [
+      { id: 'shower', label: 'Ducharse', anim: 'stand', pose: 'shower', dur: 7, rates: { hygiene: 16, fun: 0.6 }, adv: { hygiene: 85 }, exclusive: true,
+        spot: () => ({ lx: 0, ly: 0, face: -HALF_PI, inside: true }) },
+    ],
+  },
+  desk: {
+    name: 'Ordenador', icon: '🖥️', price: 400, hx: 0.08, hy: 0.075, mass: 4, mus: 0.4,
+    build() {
+      const g = new THREE.Group();
+      g.add(box(0.16, 0.07, 0.012, C.wood, 0, -0.04, 0.112));
+      for (const x of [-0.072, 0.072]) g.add(box(0.012, 0.064, 0.106, C.woodDark, x, -0.04, 0.053));
+      g.add(box(0.068, 0.05, 0.055, '#d8cfb8', 0, -0.052, 0.147));
+      g.add(box(0.05, 0.03, 0.02, '#cfc5ad', 0, -0.07, 0.13));
+      const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.04), screenMat());
+      scr.rotation.x = HALF_PI; scr.position.set(0, -0.0265, 0.15);
+      g.add(scr);
+      g.userData.screen = scr.material;
+      g.add(box(0.06, 0.02, 0.005, '#cfc5ad', 0, -0.016, 0.121));
+      g.add(cyl(0.024, 0.024, 0.01, C.red, 0, 0.038, 0.066, 10));
+      g.add(cyl(0.005, 0.005, 0.062, C.metal, 0, 0.038, 0.031, 6));
+      return g;
+    },
+    support: (lx, ly) => (ly < -0.004 ? 0.118 : 0.071),
+    actions: [
+      { id: 'work', label: 'Trabajar', anim: 'sit', pose: 'type', dur: 14, rates: { fun: -1.3, energy: -0.7, money: 4 }, adv: { money: 1 },
+        seat: () => ({ lx: 0, ly: 0.038, h: 0.071, face: -HALF_PI }), screen: 'work',
+        refuse: (a) => a.needs && (a.mood() < 22 || a.needs.fun < 8 || a.needs.energy < 10) ? pick(['No tengo ganas…', '¡Hoy no!', 'Estoy muy cansado…']) : null },
+      { id: 'game', label: 'Jugar a videojuegos', anim: 'sit', pose: 'type', dur: 12, rates: { fun: 5.5, energy: -0.3, social: 0.3 }, adv: { fun: 60 }, visitor: true,
+        seat: () => ({ lx: 0, ly: 0.038, h: 0.071, face: -HALF_PI }), screen: 'game' },
+    ],
   },
   table: {
-    hx: 0.13, hy: 0.085, mass: 3, mus: 0.27,
+    name: 'Mesa', icon: '🍽️', price: 80, hx: 0.1, hy: 0.07, mass: 3, mus: 0.3,
     build() {
       const g = new THREE.Group();
-      g.add(rbox(0.26, 0.17, 0.014, COL.wood, 0, 0, 0.126, 0.006));
-      for (const [x, y] of [[-0.113, -0.068], [0.113, -0.068], [-0.113, 0.068], [0.113, 0.068]]) g.add(cyl(0.006, 0.005, 0.12, COL.woodDark, x, y, 0.06, 10));
-      g.add(cyl(0.012, 0.01, 0.022, COL.white, 0.07, 0.035, 0.144, 16));
-      g.add(cyl(0.022, 0.022, 0.004, COL.white, -0.05, -0.02, 0.135, 20));
-      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.011, 14, 10), mat('#e8a13f'));
-      fruit.position.set(-0.05, -0.02, 0.147);
-      g.add(shadowed(fruit));
+      g.add(box(0.2, 0.14, 0.012, C.wood, 0, 0, 0.12));
+      for (const [x, y] of [[-0.088, -0.058], [0.088, -0.058], [-0.088, 0.058], [0.088, 0.058]]) g.add(box(0.012, 0.012, 0.114, C.woodDark, x, y, 0.057));
+      g.add(box(0.12, 0.05, 0.002, '#e9e3d6', 0, 0, 0.127));
+      g.add(cyl(0.01, 0.008, 0.024, '#d9e6ea', 0.05, 0.02, 0.138, 8));
+      g.add(ball(0.01, C.red, 0.05, 0.02, 0.156, 0));
       return g;
     },
-    support() { return 0.133; },
+    support: () => 0.126,
+    actions: [],
   },
-  lamp: {
-    hx: 0.03, hy: 0.03, mass: 2, mus: 0.35,
+  chair: {
+    name: 'Silla', icon: '🪑', price: 40, hx: 0.042, hy: 0.042, mass: 1, mus: 0.22,
     build() {
       const g = new THREE.Group();
-      g.add(cyl(0.028, 0.03, 0.008, COL.metal, 0, 0, 0.004, 20));
-      g.add(cyl(0.0035, 0.0035, 0.25, COL.metal, 0, 0, 0.129, 8));
-      const shadeMat = new THREE.MeshStandardMaterial({ color: COL.lamp, roughness: 0.9, emissive: '#ffb45c', emissiveIntensity: 0, side: THREE.DoubleSide });
-      const shade = cyl(0.027, 0.045, 0.05, shadeMat, 0, 0, 0.25, 24);
+      g.add(box(0.084, 0.084, 0.012, C.green, 0, 0, 0.073));
+      for (const [x, y] of [[-0.034, -0.034], [0.034, -0.034], [-0.034, 0.034], [0.034, 0.034]]) g.add(box(0.01, 0.01, 0.068, C.woodDark, x, y, 0.034));
+      g.add(box(0.084, 0.012, 0.085, C.green, 0, -0.036, 0.122));
+      return g;
+    },
+    support: (lx, ly) => (ly < -0.03 ? 0.165 : 0.079),
+    actions: [
+      { id: 'sitc', label: 'Sentarse', anim: 'sit', dur: 8, rates: { energy: 0.6 }, adv: { energy: 6 }, visitor: true,
+        seat: () => ({ lx: 0, ly: 0.008, h: 0.079, face: HALF_PI }) },
+    ],
+  },
+  sofa: {
+    name: 'Sofá', icon: '🛋️', price: 180, hx: 0.19, hy: 0.07, mass: 6, mus: 0.32,
+    build() {
+      const g = new THREE.Group();
+      const f = texMat(TEX.sofa, 6, 2);
+      g.add(box(0.38, 0.13, 0.05, f, 0, 0.005, 0.035));
+      g.add(box(0.16, 0.11, 0.028, '#a57d4d', -0.083, 0.012, 0.072));
+      g.add(box(0.16, 0.11, 0.028, '#a57d4d', 0.083, 0.012, 0.072));
+      g.add(box(0.38, 0.036, 0.13, f, 0, -0.052, 0.075));
+      g.add(box(0.03, 0.14, 0.095, f, -0.175, 0, 0.0525));
+      g.add(box(0.03, 0.14, 0.095, f, 0.175, 0, 0.0525));
+      return g;
+    },
+    support: (lx, ly) => (Math.abs(lx) > 0.16 ? 0.1 : ly < -0.034 ? 0.14 : 0.086),
+    seats: [{ lx: -0.08, ly: 0.012, h: 0.086 }, { lx: 0.08, ly: 0.012, h: 0.086 }],
+    actions: [
+      { id: 'sits', label: 'Sentarse', anim: 'sit', dur: 10, rates: { energy: 0.8, fun: 0.4 }, adv: { energy: 8, fun: 5 }, visitor: true, seat: 'free' },
+      { id: 'naps', label: 'Echarse la siesta', anim: 'lie', dur: 14, rates: { energy: 2.6 }, adv: { energy: 38 },
+        seat: () => ({ lx: 0.14, ly: 0.012, h: 0.086, face: 0, all: true }) },
+    ],
+  },
+  tv: {
+    name: 'Tele', icon: '📺', price: 160, hx: 0.075, hy: 0.035, mass: 3, mus: 0.35,
+    build() {
+      const g = new THREE.Group();
+      g.add(box(0.15, 0.07, 0.055, C.woodDark, 0, 0, 0.0275));
+      g.add(box(0.11, 0.07, 0.085, '#3a3540', 0, -0.006, 0.098));
+      const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.085, 0.064), screenMat());
+      scr.rotation.x = HALF_PI; scr.position.set(0, 0.0295, 0.1);
+      g.add(scr);
+      g.userData.screen = scr.material;
+      g.add(box(0.004, 0.004, 0.05, C.metal, -0.02, -0.01, 0.16));
+      g.add(box(0.004, 0.004, 0.05, C.metal, 0.02, -0.01, 0.16));
+      return g;
+    },
+    support: () => 0.14,
+    actions: [
+      { id: 'watch', label: 'Ver la tele', anim: 'auto', pose: 'watch', dur: 14, rates: { fun: 4.5, energy: 0.2 }, adv: { fun: 55 }, visitor: true, screen: 'tv' },
+    ],
+  },
+  stereo: {
+    name: 'Equipo de música', icon: '📻', price: 120, hx: 0.05, hy: 0.03, mass: 2, mus: 0.35,
+    build() {
+      const g = new THREE.Group();
+      g.add(box(0.1, 0.055, 0.05, '#3a3540', 0, 0, 0.025));
+      for (const x of [-0.032, 0.032]) {
+        g.add(box(0.03, 0.05, 0.1, '#2b2731', x, -0.002, 0.1));
+        const cone = cyl(0.011, 0.011, 0.004, C.metal, x, 0.024, 0.11, 8);
+        cone.rotation.x = 0;
+        g.add(cone);
+      }
+      g.add(box(0.03, 0.004, 0.012, '#7fd1a8', 0, 0.028, 0.035));
+      return g;
+    },
+    support: () => 0.15,
+    actions: [
+      { id: 'dance', label: 'Bailar', anim: 'dance', dur: 11, rates: { fun: 5.5, energy: -1.0, hygiene: -0.4 }, adv: { fun: 60 }, visitor: true, music: true,
+        spot: (f, a) => ({ lx: rand(-0.06, 0.06), ly: f.lhy + rand(0.08, 0.15), face: -HALF_PI }) },
+    ],
+  },
+  ball: {
+    name: 'Pelota', icon: '⚽', price: 25, hx: 0.022, hy: 0.022, mass: 0.15, mus: 0.04, bounce: 0.6, round: true,
+    build() {
+      const g = new THREE.Group();
+      const b = ball(0.022, '#f4f1ea', 0, 0, 0.022, 1);
+      b.add(ball(0.0075, C.red, 0.016, 0, 0.012, 0));
+      b.add(ball(0.0075, C.red, -0.012, 0.012, -0.012, 0));
+      b.add(ball(0.0075, C.blue, 0, -0.016, 0.0, 0));
+      g.add(b);
+      g.userData.spin = b;
+      return g;
+    },
+    support: () => 0.044,
+    actions: [
+      { id: 'kick', label: 'Jugar a la pelota', anim: 'kick', dur: 12, rates: { fun: 4.8, energy: -1.1, hygiene: -0.5 }, adv: { fun: 50 }, visitor: true,
+        spot: (f) => ({ x: f.x, y: f.y, near: true }) },
+    ],
+  },
+  plant: {
+    name: 'Planta', icon: '🪴', price: 35, hx: 0.034, hy: 0.034, mass: 1.5, mus: 0.3,
+    build() {
+      const g = new THREE.Group();
+      g.add(cyl(0.032, 0.025, 0.055, '#b8643f', 0, 0, 0.0275, 8));
+      g.add(ball(0.036, C.green, 0, 0, 0.09, 0));
+      g.add(ball(0.028, '#4d8445', 0.016, -0.012, 0.118, 0));
+      g.add(ball(0.024, '#6fae5f', -0.014, 0.012, 0.128, 0));
+      return g;
+    },
+    support: () => 0.15,
+    actions: [
+      { id: 'water', label: 'Regar', anim: 'stand', pose: 'reach', dur: 3, rates: { fun: 1.5 }, adv: { fun: 6 } },
+    ],
+  },
+  lamp: {
+    name: 'Lámpara', icon: '💡', price: 50, hx: 0.03, hy: 0.03, mass: 2, mus: 0.35,
+    build() {
+      const g = new THREE.Group();
+      g.add(cyl(0.028, 0.03, 0.008, C.metal, 0, 0, 0.004, 10));
+      g.add(cyl(0.0035, 0.0035, 0.25, C.metal, 0, 0, 0.129, 6));
+      const shadeMat = new THREE.MeshLambertMaterial({ color: '#efd9a0', emissive: '#ffb45c', emissiveIntensity: 0, side: THREE.DoubleSide, flatShading: true });
+      const shade = cyl(0.027, 0.045, 0.05, shadeMat, 0, 0, 0.25, 8);
       shade.castShadow = false;
       g.add(shade);
       g.userData.shadeMat = shadeMat;
@@ -284,52 +530,65 @@ const DEFS = {
       g.userData.light = light;
       return g;
     },
-    support() { return 0.3; },
+    support: () => 0.3,
+    actions: [
+      { id: 'toggle', label: 'Encender / apagar', anim: 'stand', pose: 'reach', dur: 0.8, instant: true,
+        onEnd(a, interrupted, f) { if (!interrupted) setLamp(f, !f.on); } },
+    ],
   },
-  plant: {
-    hx: 0.034, hy: 0.034, mass: 1.5, mus: 0.3,
+  books: {
+    name: 'Estantería', icon: '📚', price: 90, hx: 0.12, hy: 0.035, mass: 7, mus: 0.45,
     build() {
       const g = new THREE.Group();
-      g.add(cyl(0.032, 0.025, 0.055, COL.pot, 0, 0, 0.0275, 18));
-      const leaves = [[0, 0, 0.09, 0.036, COL.leaf], [0.016, -0.012, 0.118, 0.028, COL.leaf2], [-0.014, 0.012, 0.128, 0.024, COL.leaf]];
-      for (const [x, y, z, r, c] of leaves) {
-        const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), mat(c, { flatShading: true }));
-        m.position.set(x, y, z);
-        m.rotation.set(x * 40, y * 30, z * 20);
-        g.add(shadowed(m));
-      }
-      return g;
-    },
-    support() { return 0.15; },
-  },
-  shelf: {
-    hx: 0.15, hy: 0.036, mass: 9, mus: 0.45,
-    build() {
-      const g = new THREE.Group();
-      g.add(rbox(0.3, 0.072, 0.11, COL.white, 0, 0, 0.055, 0.006));
-      const books = ['#d9826b', '#7f9fc2', '#e8c26a', '#7fae7b', '#3a332d', '#c9a27e', '#b98fb0'];
-      let x = -0.13;
-      for (let i = 0; i < 7; i++) {
+      g.add(box(0.24, 0.07, 0.11, C.woodDark, 0, 0, 0.055));
+      const cols = [C.red, C.blue, C.yellow, C.green, '#7d3f5b', C.cream, '#4f6f8f'];
+      let x = -0.11;
+      for (let i = 0; i < 9; i++) {
         const w = 0.012 + (i % 3) * 0.004, hh = 0.04 + ((i * 7) % 4) * 0.008;
-        g.add(rbox(w, 0.05, hh, books[i], x + w / 2, 0.002, 0.11 + hh / 2, 0.002));
+        g.add(box(w, 0.05, hh, cols[i % cols.length], x + w / 2, 0.002, 0.11 + hh / 2));
         x += w + 0.002;
       }
-      g.add(rbox(0.06, 0.045, 0.012, '#7f9fc2', 0.08, 0, 0.116, 0.003));
-      g.add(rbox(0.055, 0.04, 0.012, '#e8c26a', 0.082, 0.002, 0.128, 0.003));
+      g.add(box(0.05, 0.04, 0.012, C.blue, 0.08, 0, 0.116));
       return g;
     },
-    support(lx) { return lx < -0.02 ? 0.16 : 0.13; },
+    support: (lx) => (lx < 0.04 ? 0.16 : 0.13),
+    actions: [
+      { id: 'read', label: 'Leer un libro', anim: 'auto', pose: 'read', dur: 12, rates: { fun: 3.2, social: 0.2 }, adv: { fun: 35 }, visitor: true, hold: 'book' },
+    ],
+  },
+  fishtank: {
+    name: 'Pecera', icon: '🐟', price: 140, hx: 0.06, hy: 0.032, mass: 4, mus: 0.45,
+    build() {
+      const g = new THREE.Group();
+      g.add(box(0.12, 0.064, 0.07, C.woodDark, 0, 0, 0.035));
+      const water = new THREE.MeshLambertMaterial({ color: '#6fc3d8', transparent: true, opacity: 0.55 });
+      const tank = box(0.11, 0.056, 0.07, water, 0, 0, 0.106); tank.castShadow = false; g.add(tank);
+      g.add(box(0.1, 0.05, 0.006, '#d9c27a', 0, 0, 0.074));
+      const fish = [];
+      for (let i = 0; i < 3; i++) { const fsh = box(0.014, 0.006, 0.008, i === 1 ? '#f1d04a' : '#f08a3c', 0, 0, 0.1); g.add(fsh); fish.push(fsh); }
+      g.userData.fish = fish;
+      return g;
+    },
+    support: () => 0.142,
+    actions: [
+      { id: 'fish', label: 'Mirar los peces', anim: 'stand', pose: 'watch', dur: 9, rates: { fun: 2.8 }, adv: { fun: 25 }, visitor: true },
+      { id: 'feedfish', label: 'Dar de comer a los peces', anim: 'stand', pose: 'reach', dur: 3, rates: { fun: 3 }, adv: { fun: 9 } },
+    ],
   },
 };
+
+// Catálogo de la tienda
+const SHOP = ['tv', 'sofa', 'stereo', 'ball', 'books', 'fishtank', 'plant', 'lamp', 'chair', 'table', 'desk', 'bed', 'fridge', 'toilet', 'shower'];
+const ESSENTIAL = new Set(['fridge', 'bed', 'toilet']);
 
 const furn = [];
 function addFurn(type, x, y, rot = 0) {
   const def = DEFS[type];
   const g = def.build();
   const f = {
-    type, g, x, y, vx: 0, vy: 0, rot, visRot: rot, lhx: def.hx, lhy: def.hy, hx: def.hx, hy: def.hy,
-    mass: def.mass, mus: def.mus, support: def.support, seats: def.seats || [], drag: null, dx: 0, dy: 0,
-    wob: 0, thudT: 0, on: false,
+    type, def, g, x, y, vx: 0, vy: 0, rot, visRot: rot, lhx: def.hx, lhy: def.hy, hx: def.hx, hy: def.hy,
+    mass: def.mass, mus: def.mus, support: def.support, drag: null, dx: 0, dy: 0, wob: 0, thudT: 0, on: false,
+    seats: (def.seats || []).map((s) => ({ ...s, by: null })), busy: null, use: null, useT: 0, spawn: 0,
   };
   g.traverse((o) => { o.userData.furn = f; });
   g.position.set(x, y, 0);
@@ -338,6 +597,15 @@ function addFurn(type, x, y, rot = 0) {
   scene.add(g);
   furn.push(f);
   return f;
+}
+function removeFurn(f) {
+  const i = furn.indexOf(f);
+  if (i >= 0) furn.splice(i, 1);
+  scene.remove(f.g);
+  for (const a of agents) {
+    if (a.on === f) a.on = null;
+    if (a.act && a.act.f === f) a.endAct(true);
+  }
 }
 function updateExtents(f) {
   const odd = Math.abs(Math.round(f.rot / HALF_PI)) % 2 === 1;
@@ -362,446 +630,1126 @@ function groundAt(x, y) {
   for (const o of furn) { const s = supportAt(o, x, y); if (s > z) { z = s; f = o; } }
   return { z, f };
 }
-function isFree(x, y, r) {
+function isFree(x, y, r, ignore = null) {
   if (Math.abs(x) > W / 2 - r || Math.abs(y) > H / 2 - r) return false;
-  for (const f of furn) if (Math.abs(x - f.x) < f.hx + r && Math.abs(y - f.y) < f.hy + r) return false;
+  for (const f of furn) {
+    if (f === ignore || f.type === 'shower' || f.type === 'ball') continue;
+    if (Math.abs(x - f.x) < f.hx + r && Math.abs(y - f.y) < f.hy + r) return false;
+  }
   return true;
 }
+function findSpotFor(type) {
+  // Busca un hueco libre (mejor junto a una pared), con el frontal mirando al centro de la habitación
+  const def = DEFS[type];
+  let best = null, bestScore = -1e9;
+  for (let i = 0; i < 500; i++) {
+    const wallSide = Math.floor(rand(0, 5));
+    let rot = 0, hx = def.hx, hy = def.hy, x, y;
+    const side = (r) => { rot = r; const odd = Math.abs(Math.round(r / HALF_PI)) % 2 === 1; hx = odd ? def.hy : def.hx; hy = odd ? def.hx : def.hy; };
+    if (wallSide === 0) { side(0); x = rand(-W / 2 + hx, W / 2 - hx); y = -H / 2 + hy + 0.005; }
+    else if (wallSide === 1) { side(Math.PI); x = rand(-W / 2 + hx, W / 2 - hx); y = H / 2 - hy - 0.005; }
+    else if (wallSide === 2) { side(-HALF_PI); x = -W / 2 + hx + 0.005; y = rand(-H / 2 + hy, H / 2 - hy); }
+    else if (wallSide === 3) { side(HALF_PI); x = W / 2 - hx - 0.005; y = rand(-H / 2 + hy, H / 2 - hy); }
+    else { x = rand(-W / 2 + 0.1, W / 2 - 0.1); y = rand(-H / 2 + 0.1, H / 2 - 0.1); side(Math.round(wrap(Math.atan2(-y, -x) - HALF_PI) / HALF_PI) * HALF_PI); x = clamp(x, -W / 2 + hx, W / 2 - hx); y = clamp(y, -H / 2 + hy, H / 2 - hy); }
+    let ok = true;
+    for (const f of furn) if (Math.abs(x - f.x) < f.hx + hx + 0.03 && Math.abs(y - f.y) < f.hy + hy + 0.03) { ok = false; break; }
+    if (ok && Math.abs(x - door.x) < hx + 0.1 && y + hy > H / 2 - 0.26) ok = false;
+    // Delante tiene que quedar sitio para usarlo
+    const fx = x - Math.sin(rot) * (hy + 0.06), fy = y + Math.cos(rot) * (hy + 0.06);
+    if (ok && !isFree(fx, fy, H_R)) ok = false;
+    if (!ok) continue;
+    const score = (wallSide < 4 ? 1 : 0) + rand(0, 0.5);
+    if (score > bestScore) { bestScore = score; best = { x, y, rot }; }
+    if (i > 120 && best) break;
+  }
+  return best;
+}
+const facingOf = (f) => f.rot + HALF_PI; // dirección hacia la que "mira" el frontal del objeto
 
-let lamp = null;
-function layout() {
-  addFurn('table', 0, H * 0.02);
-  addFurn('chair', -0.215, H * 0.02, -HALF_PI);
-  addFurn('chair', 0.215, H * 0.02, HALF_PI);
-  addFurn('sofa', 0, -H / 2 + 0.09);
-  lamp = addFurn('lamp', W / 2 - 0.055, -H / 2 + 0.055);
-  addFurn('plant', -W / 2 + 0.055, -H / 2 + 0.06);
-  addFurn('plant', -W / 2 + 0.05, H / 2 - 0.05);
-  addFurn('shelf', -W / 2 + 0.037, H * 0.24, -HALF_PI);
+function defaultLayout() {
+  addFurn('fridge', -W / 2 + 0.058, H / 2 - 0.05, Math.PI);
+  addFurn('shower', W / 2 - 0.068, H / 2 - 0.068);
+  addFurn('toilet', W / 2 - 0.05, H / 2 - 0.24, HALF_PI);
+  addFurn('table', -W * 0.18, H * 0.16);
+  addFurn('chair', -W * 0.18, H * 0.16 - 0.12, 0);
+  addFurn('desk', W / 2 - 0.078, H * 0.02, HALF_PI);
+  addFurn('bed', -W / 2 + 0.102, -H / 2 + 0.172);
+  addFurn('lamp', -W / 2 + 0.24, -H / 2 + 0.04);
+  addFurn('plant', W / 2 - 0.045, -H / 2 + 0.045);
 }
 
-function setLamp(on) {
-  lamp.on = on;
+function setLamp(f, on) {
+  f.on = on;
   audio.click();
 }
 
 /* =====================================================================
- *  Humano minimalista
+ *  Humanos (el tuyo y las visitas)
  * ===================================================================== */
-const skin = new THREE.MeshStandardMaterial({ color: '#fdfbf7', roughness: 0.55 });
-const eyeMat = new THREE.MeshBasicMaterial({ color: '#2d2621' });
-function capsule(r, len) { const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 5, 12), skin); m.castShadow = true; return m; }
+const NEED_KEYS = ['hunger', 'energy', 'fun', 'hygiene', 'bladder', 'social'];
+const NEED_INFO = {
+  hunger: { label: 'Hambre', icon: '🍗', decay: 0.06, low: ['Tengo hambre…', '¿Hay algo de comer?', 'Mi barriga ruge'] },
+  energy: { label: 'Energía', icon: '⚡', decay: 0.045, low: ['Qué sueño…', 'Uaaah…', 'Necesito dormir'] },
+  fun: { label: 'Diversión', icon: '🎈', decay: 0.065, low: ['Me aburro…', 'Qué aburrimiento', 'Quiero jugar'] },
+  hygiene: { label: 'Higiene', icon: '🧼', decay: 0.035, low: ['Huelo un poco…', 'Necesito una ducha', 'Puaj'] },
+  bladder: { label: 'Vejiga', icon: '🚽', decay: 0.075, low: ['¡Tengo que ir al baño!', '¡Me hago pis!', 'Baño, baño…'] },
+  social: { label: 'Social', icon: '💬', decay: 0.05, low: ['Me siento solo…', '¿Hablamos?', 'Echo de menos a alguien'] },
+};
+const MOOD_W = { hunger: 1.3, energy: 1.1, fun: 1, hygiene: 0.8, bladder: 0.9, social: 0.8 };
+const TOPICS = ['☀️', '🍕', '⚽', '🎵', '❤️', '😂', '🐱', '💰', '📺', '🌧️', '🚗', '🎂', '👽', '🌮', '💼', '🏖️'];
 
-const rig = {};
-{
-  rig.root = new THREE.Group();
-  rig.lean = new THREE.Group();
-  rig.heading = new THREE.Group();
-  rig.body = new THREE.Group();
-  rig.root.add(rig.lean); rig.lean.add(rig.heading); rig.heading.add(rig.body);
-  rig.body.rotation.x = HALF_PI; // eje Y local -> Z del mundo (hacia el cristal)
-
-  rig.pelvis = new THREE.Group(); rig.body.add(rig.pelvis);
-  rig.chest = new THREE.Group(); rig.pelvis.add(rig.chest);
-  const torso = capsule(0.031, 0.052); torso.position.y = 0.057; rig.chest.add(torso);
-
-  rig.head = new THREE.Group(); rig.head.position.y = 0.122; rig.chest.add(rig.head);
-  const headM = new THREE.Mesh(new THREE.SphereGeometry(0.043, 24, 18), skin);
-  headM.position.y = 0.04; headM.castShadow = true; rig.head.add(headM);
-  for (const s of [-1, 1]) {
-    const e = new THREE.Mesh(new THREE.SphereGeometry(0.0062, 10, 8), eyeMat);
-    e.position.set(s * 0.016, 0.047, 0.038);
-    rig.head.add(e);
-  }
-  rig.stars = new THREE.Group(); rig.stars.position.y = 0.105; rig.head.add(rig.stars);
-  for (let i = 0; i < 3; i++) {
-    const st = new THREE.Mesh(new THREE.OctahedronGeometry(0.011), new THREE.MeshBasicMaterial({ color: '#f0c03e' }));
-    const a = (i / 3) * Math.PI * 2;
-    st.position.set(Math.cos(a) * 0.05, 0, Math.sin(a) * 0.05);
-    rig.stars.add(st);
-  }
-  rig.stars.visible = false;
-
-  const limb = (x, y, r, len, parent) => {
-    const j = new THREE.Group(); j.position.set(x, y, 0); parent.add(j);
-    const m = capsule(r, len); m.position.y = -(len / 2 + r * 0.6); j.add(m);
-    return j;
-  };
-  rig.shL = limb(0.043, 0.098, 0.0115, 0.056, rig.chest);
-  rig.shR = limb(-0.043, 0.098, 0.0115, 0.056, rig.chest);
-  rig.hipL = limb(0.017, 0.0, 0.0135, 0.034, rig.pelvis);
-  rig.hipR = limb(-0.017, 0.0, 0.0135, 0.034, rig.pelvis);
-  rig.kneeL = limb(0, -0.052, 0.0128, 0.034, rig.hipL);
-  rig.kneeR = limb(0, -0.052, 0.0128, 0.034, rig.hipR);
-  scene.add(rig.root);
-}
-const humanMeshes = [];
-rig.root.traverse((o) => { if (o.isMesh) humanMeshes.push(o); });
-
+const UPRIGHT = new Set(['idle', 'walk', 'wave', 'help', 'reach', 'dizzy', 'look', 'shame', 'door']);
 const POSE_KEYS = ['bodyRot', 'pelvisY', 'torso', 'hipL', 'hipR', 'kneeL', 'kneeR', 'spread', 'armL', 'armR', 'raiseL', 'raiseR', 'yaw', 'pitch', 'lift'];
 const standPose = () => ({ bodyRot: HALF_PI, pelvisY: 0.104, torso: 0, hipL: 0, hipR: 0, kneeL: 0, kneeR: 0, spread: 0, armL: 0, armR: 0, raiseL: 0.12, raiseR: 0.12, yaw: 0, pitch: 0, lift: 0 });
-const pose = standPose();
 
-const UPRIGHT = new Set(['idle', 'walk', 'wave', 'help', 'door', 'lamp', 'reach', 'dizzy', 'look']);
+const agents = [];
+let host = null;
+let money = 150;
+const grab = { agent: null, x: 0, y: 0, vx: 0, vy: 0, id: null };
+const finger = { follow: false, x: 0, y: 0, id: null };
+const liftZ = () => Math.min(D - HUMAN_H - 0.04, 0.45);
+const urgency = (v) => ((100 - v) / 100) ** 2 * 1.7 + (v < 25 ? 0.5 : 0);
 
-const human = {
-  x: 0, y: 0.3, z: 0, vx: 0, vy: 0, vz: 0, facing: -HALF_PI, targetFacing: -HALF_PI, spin: 0,
-  state: 'idle', st: 0, dur: 1.5, target: null, seat: null, on: null, walkPhase: 0, pokes: 0,
-  look: null, lookT: 0, still: 0, fallT: 2, hard: false, thrown: false, flag: 0, stuckT: 0, avoid: 0, avoidSign: 1,
-  lastPos: { x: 0, y: 0 }, vis: { x: 0, y: 0.3, z: 0 }, visFacing: -HALF_PI, nextZ: 0, lampDone: false,
-};
+const MEAL = { id: 'meal', label: 'Comer', anim: 'sit', pose: 'eat', dur: 8, rates: { hunger: 8.5, fun: 0.4 }, hold: 'plate' };
+const MEAL_STAND = { id: 'meal', label: 'Comer', anim: 'stand', pose: 'eat', dur: 8, rates: { hunger: 8, fun: 0.2 }, hold: 'plate' };
+const TALK = { id: 'talk', label: 'Charlar', anim: 'stand', pose: 'talk', dur: 10, rates: { social: 6.5, fun: 1.5 } };
+const FAINT = { id: 'faint', label: 'Dormir', anim: 'lie', dur: 40, rates: { energy: 3 }, until: (a) => a.needs && a.needs.energy >= 70 };
+const SOCIAL_OK = new Set(['sitc', 'sits', 'watch', 'read', 'fish']);
 
-function setState(s, dur = 0) {
-  const h = human;
-  h.state = s; h.st = 0; h.dur = dur; h.flag = 0;
-  if (s !== 'walk') h.target = null;
-  if (s !== 'sit' && s !== 'sleep') h.seat = null;
-}
+function capsule(r, len, m) { const c = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 2, 6), m); c.castShadow = true; return c; }
 
-function fall(msg, hard = true) {
-  const h = human;
-  setState('fallen');
-  h.fallT = rand(1.4, 2.4); h.still = 0; h.hard = hard;
-  if (msg) { say(msg, 1.3); audio.voice('alarm'); }
-}
+class Agent {
+  constructor(profile, isHost) {
+    this.p = profile; this.isHost = isHost; this.name = profile.name;
+    this.x = 0; this.y = 0; this.z = 0; this.vx = 0; this.vy = 0; this.vz = 0;
+    this.facing = -HALF_PI; this.targetFacing = -HALF_PI; this.spin = 0;
+    this.state = 'idle'; this.st = 0; this.dur = 1; this.target = null; this.on = null; this.walkPhase = 0; this.pokes = 0;
+    this.look = null; this.lookT = 0; this.still = 0; this.fallT = 2; this.hard = false; this.thrown = false; this.flag = 0;
+    this.stuckT = 0; this.avoid = 0; this.avoidSign = 1; this.lastPos = { x: 0, y: 0 }; this.vis = { x: 0, y: 0, z: 0 }; this.visFacing = -HALF_PI;
+    this.act = null; this.holding = null; this.nextWalk = null; this.userCmd = false; this.move = null; this.complainT = rand(6, 12);
+    this.needs = isHost ? { hunger: 70, energy: 80, fun: 60, hygiene: 75, bladder: 65, social: 50 } : null;
+    this.pose = standPose();
+    this.buildRig();
+    this.bubbleEl = document.createElement('div');
+    this.bubbleEl.className = 'bubble';
+    document.body.appendChild(this.bubbleEl);
+    this.bubbleT = 0;
+    agents.push(this);
+  }
 
-function walkTo(x, y, done, opts = {}) {
-  const h = human;
-  x = clamp(x, -W / 2 + H_R + 0.01, W / 2 - H_R - 0.01);
-  y = clamp(y, -H / 2 + H_R + 0.01, H / 2 - H_R - 0.01);
-  setState('walk');
-  h.target = { x, y, done, fast: !!opts.fast, timeout: opts.timeout || 9 };
-  h.lastPos.x = h.x; h.lastPos.y = h.y; h.stuckT = 0; h.avoid = 0;
-}
+  buildRig() {
+    const p = this.p, r = (this.rig = {});
+    const skin = mat(p.skin), shirt = mat(p.shirt), pants = mat(p.pants), hair = mat(p.hair), shoe = mat('#2a2420');
+    r.root = new THREE.Group(); r.lean = new THREE.Group(); r.heading = new THREE.Group(); r.body = new THREE.Group();
+    r.root.add(r.lean); r.lean.add(r.heading); r.heading.add(r.body);
+    r.body.rotation.x = HALF_PI;
+    r.body.scale.setScalar(p.scale || 1);
+    r.pelvis = new THREE.Group(); r.body.add(r.pelvis);
+    r.chest = new THREE.Group(); r.pelvis.add(r.chest);
+    const torso = capsule(0.032, 0.05, shirt); torso.position.y = 0.057; r.chest.add(torso);
+    r.head = new THREE.Group(); r.head.position.y = 0.122; r.chest.add(r.head);
+    const headM = new THREE.Mesh(new THREE.SphereGeometry(0.043, 8, 6), skin);
+    headM.position.y = 0.04; headM.castShadow = true; r.head.add(headM);
+    const eyeMat = mat('#1e1a1a');
+    for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.BoxGeometry(0.009, 0.012, 0.006), eyeMat); e.position.set(s * 0.016, 0.047, 0.04); r.head.add(e); }
+    const cap = () => { const c = new THREE.Mesh(new THREE.SphereGeometry(0.047, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.55), hair); c.position.set(0, 0.043, -0.004); c.castShadow = true; return c; };
+    if (p.hairStyle !== 'bald') r.head.add(cap());
+    if (p.hairStyle === 'long') { const l = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.07, 0.025), hair); l.position.set(0, 0.025, -0.032); r.head.add(l); }
+    if (p.hairStyle === 'bun') { const b = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 5), hair); b.position.set(0, 0.09, -0.02); r.head.add(b); }
+    if (p.hairStyle === 'flat') { const f = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.035, 0.075), hair); f.position.set(0, 0.085, -0.003); r.head.add(f); }
 
-function sitOn(f, seat, sleep = false) {
-  const h = human;
-  setState(sleep ? 'sleep' : 'sit', sleep ? rand(9, 16) : rand(5, 11));
-  h.seat = sleep ? { f, lx: 0.15, ly: 0.012, h: 0.089, face: 0 } : { f, lx: seat.lx, ly: seat.ly, h: seat.h, face: HALF_PI };
-  h.vz = 0;
-}
+    const limb = (x, y, rad, len, parent, m, end) => {
+      const j = new THREE.Group(); j.position.set(x, y, 0); parent.add(j);
+      const c = capsule(rad, len, m); c.position.y = -(len / 2 + rad * 0.6); j.add(c);
+      if (end) { end.position.y = -(len + rad * 1.4); j.add(end); }
+      return j;
+    };
+    const hand = () => { const h = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.018, 0.018), skin); h.castShadow = true; return h; };
+    const foot = () => { const f = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.014, 0.034), shoe); f.position.z = 0.008; f.castShadow = true; return f; };
+    r.shL = limb(0.045, 0.098, 0.012, 0.05, r.chest, shirt, hand());
+    r.shR = limb(-0.045, 0.098, 0.012, 0.05, r.chest, shirt, hand());
+    r.hipL = limb(0.017, 0.0, 0.014, 0.034, r.pelvis, pants);
+    r.hipR = limb(-0.017, 0.0, 0.014, 0.034, r.pelvis, pants);
+    r.kneeL = limb(0, -0.052, 0.013, 0.03, r.hipL, pants, foot());
+    r.kneeR = limb(0, -0.052, 0.013, 0.03, r.hipR, pants, foot());
 
-function standUpFromSeat() {
-  const h = human;
-  const s = h.seat;
-  if (!s) return;
-  const [fx, fy] = toWorld(s.f, s.face === 0 ? 0 : s.lx, s.f.lhy + 0.045);
-  h.x = clamp(fx, -W / 2 + H_R, W / 2 - H_R);
-  h.y = clamp(fy, -H / 2 + H_R, H / 2 - H_R);
-  h.facing = h.targetFacing = s.f.rot + HALF_PI;
-  setState('air');
-  h.vz = 0.4;
-}
+    // Objeto en la mano
+    r.item = new THREE.Group(); r.item.position.set(0, 0.06, 0.055); r.chest.add(r.item);
+    r.plate = new THREE.Group();
+    r.plate.add(cyl(0.022, 0.022, 0.004, '#f4f1ea', 0, 0, 0, 10));
+    r.plate.add(ball(0.012, '#d6873a', 0, 0, 0.008, 0));
+    r.plate.rotation.x = -HALF_PI;
+    r.book = new THREE.Group();
+    r.book.add(box(0.04, 0.008, 0.05, C.red, 0, 0, 0));
+    r.item.add(r.plate, r.book);
 
-function seatApproach(f, seat) {
-  const [x, y] = toWorld(f, seat.lx, f.lhy + 0.048);
-  return isFree(x, y, H_R + 0.004) ? { x, y } : null;
-}
+    // Estrellas de mareo, olor y agua de la ducha
+    r.stars = new THREE.Group(); r.stars.position.y = 0.105; r.head.add(r.stars);
+    for (let i = 0; i < 3; i++) {
+      const s = new THREE.Mesh(new THREE.OctahedronGeometry(0.011, 0), new THREE.MeshBasicMaterial({ color: '#f0c03e' }));
+      const a = (i / 3) * Math.PI * 2; s.position.set(Math.cos(a) * 0.05, 0, Math.sin(a) * 0.05); r.stars.add(s);
+    }
+    r.stars.visible = false;
+    r.fx = new THREE.Group(); r.root.add(r.fx);
+    r.stink = []; r.drops = [];
+    for (let i = 0; i < 4; i++) {
+      const s = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.008, 0.03), new THREE.MeshBasicMaterial({ color: '#8fbf3f' }));
+      s.visible = false; r.fx.add(s); r.stink.push(s);
+    }
+    for (let i = 0; i < 8; i++) {
+      const d = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.004, 0.02), new THREE.MeshBasicMaterial({ color: '#9fd6ee' }));
+      d.visible = false; r.fx.add(d); r.drops.push(d);
+    }
+    r.meshes = [];
+    r.root.traverse((o) => { if (o.isMesh) r.meshes.push(o); });
+    scene.add(r.root);
+  }
 
-function think() {
-  const h = human;
-  const opts = [];
-  opts.push(['wander', 3]);
-  opts.push(['look', 1]);
-  const chairs = furn.filter((f) => f.type === 'chair');
-  const sofa = furn.find((f) => f.type === 'sofa');
-  if (chairs.length) opts.push(['chair', 1.6]);
-  if (sofa) opts.push(['sofa', 1.6], ['sleep', 0.7]);
-  opts.push(['lamp', 0.7], ['door', 0.8]);
-  if (face.present) opts.push(['wave', 1.4], ['help', 1.0]); else opts.push(['help', 0.35]);
-  let total = opts.reduce((a, o) => a + o[1], 0), r = Math.random() * total, choice = 'wander';
-  for (const [k, w] of opts) { if ((r -= w) <= 0) { choice = k; break; } }
+  destroy() {
+    if (this.act) this.endAct(true);
+    scene.remove(this.rig.root);
+    this.bubbleEl.remove();
+    const i = agents.indexOf(this);
+    if (i >= 0) agents.splice(i, 1);
+    if (grab.agent === this) grab.agent = null;
+  }
 
-  switch (choice) {
-    case 'wander': {
-      for (let i = 0; i < 25; i++) {
-        const x = rand(-W / 2 + 0.06, W / 2 - 0.06), y = rand(-H / 2 + 0.06, H / 2 - 0.06);
-        if (isFree(x, y, 0.05)) { walkTo(x, y, () => setState('idle', rand(1, 3))); return; }
+  place(x, y) { this.x = this.vis.x = x; this.y = this.vis.y = y; this.z = this.vis.z = groundAt(x, y).z; }
+
+  mood() {
+    if (!this.needs) return 70;
+    let s = 0, w = 0;
+    for (const k of NEED_KEYS) { s += this.needs[k] * MOOD_W[k]; w += MOOD_W[k]; }
+    let m = s / w;
+    for (const k of NEED_KEYS) if (this.needs[k] < 12) m -= 8;
+    return clamp(m, 0, 100);
+  }
+
+  addNeed(k, v) { if (this.needs) this.needs[k] = clamp(this.needs[k] + v, 0, 100); }
+
+  setState(s, dur = 0) {
+    this.state = s; this.st = 0; this.dur = dur; this.flag = 0;
+    if (s !== 'walk') this.target = null;
+    if (s !== 'act') this.move = null;
+  }
+
+  say(text, dur = 1.5, thought = false) {
+    this.bubbleEl.textContent = text;
+    this.bubbleEl.classList.toggle('thought', thought);
+    this.bubbleT = dur;
+    this.bubbleEl.classList.add('show');
+  }
+  voice(mood) { audio.voice(mood, this.p.pitch || 1); }
+
+  fall(msg, hard = true) {
+    if (this.act) this.endAct(true);
+    this.setState('fallen');
+    this.fallT = rand(1.4, 2.4); this.still = 0; this.hard = hard;
+    if (this.holding) this.holding = null;
+    if (msg) { this.say(msg, 1.3); this.voice('alarm'); }
+    if (hard) this.addNeed('fun', -4);
+  }
+
+  walkTo(x, y, done, opts = {}) {
+    x = clamp(x, -W / 2 + H_R + 0.01, W / 2 - H_R - 0.01);
+    y = clamp(y, -H / 2 + H_R + 0.01, H / 2 - H_R - 0.01);
+    this.setState('walk');
+    this.target = { x, y, done, fast: !!opts.fast, timeout: opts.timeout || 10 };
+    this.lastPos.x = this.x; this.lastPos.y = this.y; this.stuckT = 0; this.avoid = 0;
+  }
+
+  canTalk() {
+    if (this.leaving || this.state === 'held') return false;
+    if (this.state === 'idle' || this.state === 'look' || this.state === 'wave') return true;
+    if (this.state === 'walk' && !this.userCmd) return true;
+    return false;
+  }
+
+  /* ---------- Acciones sobre objetos ---------- */
+  seatsOf(f) {
+    if (f.seats.length) return f.seats;
+    const a = f.def.actions.find((d) => typeof d.seat === 'function' && d.anim === 'sit');
+    if (!a) return [];
+    if (!f.mainSeat) f.mainSeat = { ...a.seat(f), by: null, single: true };
+    return [f.mainSeat];
+  }
+  seatFree(f, seat) {
+    const by = seat.single || !f.seats.length ? f.busy : seat.by;
+    return !by || by === this;
+  }
+  findSeatNear(target, mustFace) {
+    let best = null, bestD = 1e9;
+    for (const f of furn) {
+      if (f.type !== 'sofa' && f.type !== 'chair') continue;
+      if (f.busy && f.busy !== this && f.type === 'sofa') continue;
+      for (const seat of this.seatsOf(f)) {
+        if (!this.seatFree(f, seat)) continue;
+        const [sx, sy] = toWorld(f, seat.lx, seat.ly);
+        const dx = target.x - sx, dy = target.y - sy, d = Math.hypot(dx, dy);
+        if (d > 0.75) continue;
+        if (mustFace) {
+          const fa = facingOf(f);
+          if ((Math.cos(fa) * dx + Math.sin(fa) * dy) / d < 0.6) continue;
+          const ta = facingOf(target);
+          if (-(Math.cos(ta) * dx + Math.sin(ta) * dy) / d < 0.2) continue;
+        }
+        if (d < bestD) { bestD = d; best = { f, seat }; }
       }
-      break;
     }
-    case 'chair': case 'sofa': case 'sleep': {
-      const f = choice === 'chair' ? pick(chairs) : sofa;
-      const seat = choice === 'sleep' ? { lx: 0, ly: 0.012 } : pick(f.seats);
-      const p = seatApproach(f, seat);
-      if (!p) break;
-      walkTo(p.x, p.y, () => {
-        const q = seatApproach(f, seat);
-        if (q && Math.hypot(q.x - h.x, q.y - h.y) < 0.06) {
-          sitOn(f, seat, choice === 'sleep');
-          if (choice === 'sleep') say('Uaaah…', 1.4);
-        } else setState('idle', 1);
-      });
-      return;
-    }
-    case 'lamp': {
-      if (!lamp) break;
-      const d = Math.hypot(lamp.x, lamp.y) || 1;
-      const x = lamp.x - (lamp.x / d) * 0.075, y = lamp.y - (lamp.y / d) * 0.075;
-      if (!isFree(x, y, H_R)) break;
-      walkTo(x, y, () => { setState('lamp', 1.3); h.targetFacing = Math.atan2(lamp.y - h.y, lamp.x - h.x); h.lampDone = false; });
-      return;
-    }
-    case 'door': {
-      const x = doorX, y = H / 2 - 0.055;
-      if (!isFree(x, y, H_R)) break;
-      walkTo(x, y, () => { setState('door', 3.2); h.targetFacing = HALF_PI; });
-      return;
-    }
-    case 'wave':
-      setState('wave', 2.4); h.targetFacing = -HALF_PI;
-      say(pick(['¡Hola!', '¡Eh, tú!', '¡Te veo!', '¡Hola, gigante!']), 1.6); audio.voice('happy');
-      return;
-    case 'help': {
-      const go = () => { setState('help', 3.4); h.targetFacing = -HALF_PI; say(pick(['¡Sácame de aquí!', '¡Socorro!', '¡Déjame salir!']), 2.2); audio.voice('alarm'); };
-      if (isFree(0, 0, 0.05)) walkTo(rand(-0.05, 0.05), rand(-0.05, 0.05), go); else go();
-      return;
-    }
-    case 'look':
-      setState('look', rand(2, 4));
-      return;
+    return best;
   }
-  setState('idle', rand(0.8, 2));
-}
 
-function poke() {
-  const h = human;
-  h.pokes += 1;
-  audio.giggle();
-  if (h.state === 'sit' || h.state === 'sleep') {
-    const wasSleep = h.state === 'sleep';
-    standUpFromSeat();
-    say(wasSleep ? '¡¿Qué?! ¡Estaba durmiendo!' : '!', 1.6);
-    return;
+  seatApproach(f, seat) {
+    const cands = [[seat.all ? 0 : seat.lx, f.lhy + 0.05], [f.lhx + 0.05, seat.ly], [-f.lhx - 0.05, seat.ly], [seat.all ? 0 : seat.lx, -f.lhy - 0.05]];
+    for (const [lx, ly] of cands) {
+      const [x, y] = toWorld(f, lx, ly);
+      if (isFree(x, y, H_R + 0.003)) return [x, y];
+    }
+    return null;
   }
-  if (h.state === 'fallen') { h.still += 0.6; say('Ay…', 1); return; }
-  const angry = h.pokes > 4.5;
-  say(angry ? pick(['¡Para ya!', 'Grrr…', '¡Basta!', '¡Oye!']) : pick(['¡Ji ji!', '¡Cosquillas!', '!', '¡Je!', '¡Ay!']), 1.2);
-  if (h.z <= groundAt(h.x, h.y).z + 0.003) {
-    setState('air');
-    h.vz = angry ? 0.5 : 0.85;
+
+  planFor(f, def) {
+    let anim = def.anim;
+    if (anim === 'auto') {
+      const s = this.findSeatNear(f, def.pose === 'watch');
+      const ap = s && this.seatApproach(s.f, s.seat);
+      if (ap) return { anim: 'sit', seatF: s.f, seat: s.seat, ax: ap[0], ay: ap[1] };
+      anim = 'stand';
+    }
+    if (anim === 'sit' || anim === 'lie') {
+      let seat;
+      if (def.seat === 'free') seat = this.seatsOf(f).find((s) => this.seatFree(f, s));
+      else if (def.seat) {
+        const sd = def.seat(f);
+        if (sd.all) { if (f.busy && f.busy !== this) return null; if (f.seats.some((s) => s.by && s.by !== this)) return null; seat = { ...sd, single: true }; }
+        else seat = this.seatsOf(f)[0] || { ...sd, single: true };
+        if (!this.seatFree(f, seat)) return null;
+      } else seat = this.seatsOf(f).find((s) => this.seatFree(f, s));
+      if (!seat) return null;
+      const ap = this.seatApproach(f, seat);
+      if (!ap) return null;
+      return { anim, seatF: f, seat, ax: ap[0], ay: ap[1] };
+    }
+    if (anim === 'kick') return { anim, ax: f.x + rand(-0.05, 0.05), ay: f.y + rand(-0.05, 0.05) };
+    const sp = def.spot ? def.spot(f, this) : { lx: 0, ly: f.lhy + 0.055 };
+    let [x, y] = toWorld(f, sp.lx, sp.ly);
+    if (!sp.inside && !isFree(x, y, H_R)) {
+      const alts = [[f.lhx + 0.05, 0], [-f.lhx - 0.05, 0], [0, -f.lhy - 0.055], [f.lhx * 0.7, f.lhy + 0.06], [-f.lhx * 0.7, f.lhy + 0.06]];
+      const ok = alts.map(([lx, ly]) => toWorld(f, lx, ly)).find(([ax, ay]) => isFree(ax, ay, H_R));
+      if (!ok) return null;
+      [x, y] = ok;
+    }
+    return { anim, ax: x, ay: y, face: sp.face !== undefined ? f.rot + sp.face : null };
   }
-  if (angry) {
-    h.pokes = 2.5;
-    audio.voice('angry');
-    // se aleja corriendo del dedo
+
+  perform(f, def, opts = {}) {
+    if (!furn.includes(f) || this.state === 'held') return false;
+    const user = !!opts.user;
+    if (this.isHost && def.refuse) { const r = def.refuse(this); if (r) { this.say(r, 1.8); this.voice('angry'); return false; } }
+    if (def.cost && money < def.cost) { if (this.isHost) { this.say('No hay dinero…', 1.6); this.voice('sad'); } return false; }
+    if (def.exclusive && f.busy && f.busy !== this) { if (user) this.say('Está ocupado', 1.2); return false; }
+    const plan = opts.plan || this.planFor(f, def);
+    if (!plan) { if (user) this.say('No puedo llegar…', 1.4); return false; }
+    if (this.act) this.endAct(true);
+    if (this.state === 'fallen' || this.state === 'getup' || this.state === 'air' || this.state === 'stumble') {
+      if (user) this.say('¡Espera!', 1);
+      return false;
+    }
+    this.userCmd = user;
+    if (opts.here) { this.beginAct(f, def, plan); return true; }
+    this.walkTo(plan.ax, plan.ay, () => this.beginAct(f, def, plan), { fast: opts.fast });
+    return true;
+  }
+
+  beginAct(f, def, plan) {
+    if (f && !furn.includes(f)) { this.setState('idle', 0.5); return; }
+    if (plan.seat && !this.seatFree(plan.seatF, plan.seat)) { this.say('Ocupado…', 1.2); this.setState('idle', 1); return; }
+    if (def.exclusive && f.busy && f.busy !== this) { this.setState('idle', 1); return; }
+    if (Math.hypot(this.x - plan.ax, this.y - plan.ay) > 0.1) { this.setState('idle', 0.5); return; }
+    if (def.cost) {
+      if (money < def.cost) { if (this.isHost) this.say('No hay dinero…', 1.5); this.setState('idle', 1); return; }
+      spend(def.cost, !this.isHost ? `${this.name} se come tu comida (−${def.cost}◎)` : null);
+    }
+    this.setState('act');
+    this.act = { f, def, plan, t: 0, dur: def.dur * (this.isHost ? 1 : rand(0.8, 1.3)), seatF: plan.seatF, seat: plan.seat, anim: plan.anim, partner: null };
+    if (plan.seat) {
+      if (plan.seat.single || !plan.seatF.seats.length) plan.seatF.busy = this; else plan.seat.by = this;
+      this.vz = 0;
+    }
+    if (def.exclusive && f) f.busy = this;
+    if (def.hold) this.holding = def.hold;
+    if (def.screen && f) f.use = def.screen;
+    if (!plan.seat) this.targetFacing = plan.face != null ? plan.face : f ? Math.atan2(f.y - this.y, f.x - this.x) : this.facing;
+    if (def.id === 'sleep' || def.id === 'nap' || def.id === 'naps') this.say('Zzz…', 1.4);
+  }
+
+  endAct(interrupted) {
+    const a = this.act;
+    if (!a) return;
+    this.act = null;
+    if (a.seat) {
+      if (a.seatF.busy === this) a.seatF.busy = null;
+      if (a.seat.by === this) a.seat.by = null;
+    }
+    if (a.f && a.f.busy === this) a.f.busy = null;
+    if (a.f && a.def.screen && !agents.some((o) => o !== this && o.act && o.act.f === a.f && o.act.def.screen)) a.f.use = null;
+    if (a.def.hold && this.holding === a.def.hold) this.holding = null;
+    if (a.partner && a.partner.act && a.partner.act.partner === this) a.partner.endAct(false);
+    if (a.seat && furn.includes(a.seatF)) this.standFromSeat(a);
+    else if (this.state === 'act') this.setState('idle', rand(0.4, 1.2));
+    this.userCmd = false;
+    if (a.def.onEnd) a.def.onEnd(this, interrupted, a.f);
+  }
+
+  standFromSeat(a) {
+    const f = a.seatF, s = a.seat;
+    const [fx, fy] = this.seatApproach(f, s) || toWorld(f, s.all ? 0 : s.lx, f.lhy + 0.045);
+    this.x = clamp(fx, -W / 2 + H_R, W / 2 - H_R);
+    this.y = clamp(fy, -H / 2 + H_R, H / 2 - H_R);
+    this.facing = this.targetFacing = facingOf(f);
+    this.setState('air');
+    this.vz = 0.4;
+  }
+
+  startMeal() {
+    // Busca una silla junto a una mesa; si no, otra silla o el sofá; si no, come de pie
+    let best = null, bestD = 1e9;
+    for (const f of furn) {
+      if (f.type !== 'chair' && f.type !== 'sofa') continue;
+      for (const seat of this.seatsOf(f)) {
+        if (!this.seatFree(f, seat)) continue;
+        const [sx, sy] = toWorld(f, seat.lx, seat.ly);
+        const fa = facingOf(f), fx = sx + Math.cos(fa) * 0.09, fy = sy + Math.sin(fa) * 0.09;
+        const atTable = furn.some((t) => t.type === 'table' && supportAt(t, fx, fy) > 0);
+        if (!this.seatApproach(f, seat)) continue;
+        const d = Math.hypot(sx - this.x, sy - this.y) + (atTable ? 0 : 0.8) + (f.type === 'sofa' ? 0.3 : 0);
+        if (d < bestD) { bestD = d; best = { f, seat }; }
+      }
+    }
+    this.holding = 'plate';
+    if (best) {
+      const ap = this.seatApproach(best.f, best.seat);
+      const [ax, ay] = ap || [0, 0];
+      if (ap && this.perform(best.f, MEAL, { plan: { anim: 'sit', seatF: best.f, seat: best.seat, ax, ay }, user: this.userCmd })) { this.holding = 'plate'; return; }
+    }
+    this.perform(furn.find((f) => f.type === 'fridge') || furn[0], MEAL_STAND, { plan: { anim: 'stand', ax: this.x, ay: this.y, face: this.facing }, here: true });
+    this.holding = 'plate';
+  }
+
+  startTalk(o) {
+    if (!o || !o.canTalk() || o === this) return false;
+    const ang = Math.atan2(this.y - o.y, this.x - o.x);
+    const tx = o.x + Math.cos(ang) * 0.1, ty = o.y + Math.sin(ang) * 0.1;
+    if (this.act) this.endAct(true);
+    o.setState('idle', 8);
+    o.targetFacing = Math.atan2(this.y - o.y, this.x - o.x);
+    o.waitFor = this;
+    this.walkTo(tx, ty, () => {
+      o.waitFor = null;
+      if (!agents.includes(o) || o.state !== 'idle' || Math.hypot(o.x - this.x, o.y - this.y) > 0.2) { this.setState('idle', 1); return; }
+      beginTalk(this, o);
+    }, { fast: false });
+    return true;
+  }
+
+  poke() {
+    this.pokes += 1;
+    audio.giggle(this.p.pitch || 1);
+    if (this.act && this.act.seat) {
+      const sleeping = this.act.anim === 'lie';
+      this.endAct(true);
+      this.say(sleeping ? '¡¿Qué?! ¡Estaba durmiendo!' : '!', 1.6);
+      if (sleeping) this.addNeed('fun', -5);
+      return;
+    }
+    if (this.state === 'fallen') { this.still += 0.6; this.say('Ay…', 1); return; }
+    if (this.act) this.endAct(true);
+    const angry = this.pokes > 4.5;
+    this.say(angry ? pick(['¡Para ya!', 'Grrr…', '¡Basta!', '¡Oye!']) : pick(['¡Ji ji!', '¡Cosquillas!', '!', '¡Je!', '¡Ay!']), 1.2);
+    if (angry) this.addNeed('fun', -3); else { this.addNeed('fun', 5); this.addNeed('social', 4); }
+    if (this.z <= groundAt(this.x, this.y).z + 0.003) { this.setState('air'); this.vz = angry ? 0.5 : 0.85; }
+    if (angry) {
+      this.pokes = 2.5;
+      this.voice('angry');
+      if (!this.isHost) { this.angry = true; return; }
+      for (let i = 0; i < 20; i++) {
+        const a = rand(0, Math.PI * 2), x = this.x + Math.cos(a) * 0.35, y = this.y + Math.sin(a) * 0.35;
+        if (isFree(x, y, 0.05)) { this.nextWalk = { x, y }; break; }
+      }
+    }
+  }
+
+  /* ---------- Física ---------- */
+  friction(decel, dt) {
+    const sp = Math.hypot(this.vx, this.vy);
+    if (sp < 1e-4) return;
+    const ns = Math.max(0, sp - decel * dt);
+    this.vx *= ns / sp; this.vy *= ns / sp;
+  }
+
+  collideFurn(px, py) {
+    let impact = 0;
+    for (const f of furn) {
+      const cx = clamp(this.x, f.x - f.hx, f.x + f.hx), cy = clamp(this.y, f.y - f.hy, f.y + f.hy);
+      const dx = this.x - cx, dy = this.y - cy, d2 = dx * dx + dy * dy;
+      if (d2 > H_R * H_R) continue;
+      const [lx, ly] = toLocal(f, cx, cy);
+      const top = f.support(clamp(lx, -f.lhx + 0.004, f.lhx - 0.004), clamp(ly, -f.lhy + 0.004, f.lhy - 0.004));
+      if (this.z >= top - 0.03) continue;
+      if (f.def.round && !f.drag) {
+        // La pelota sale disparada al chocar con ella
+        const d = Math.sqrt(d2) || 1e-3, nx = d2 > 1e-10 ? dx / d : 1, ny = d2 > 1e-10 ? dy / d : 0;
+        f.x -= nx * (H_R - d + 0.002); f.y -= ny * (H_R - d + 0.002);
+        const sp = Math.max(0.35, Math.hypot(this.vx, this.vy) * 1.8);
+        f.vx = -nx * sp; f.vy = -ny * sp;
+        audio.kick();
+        continue;
+      }
+      if (d2 > 1e-10) {
+        const d = Math.sqrt(d2), nx = dx / d, ny = dy / d, push = H_R - d;
+        this.x += nx * push; this.y += ny * push;
+        const vn = (this.vx - f.vx) * nx + (this.vy - f.vy) * ny;
+        if (vn < 0) { impact = Math.max(impact, -vn); this.vx -= 1.35 * vn * nx; this.vy -= 1.35 * vn * ny; }
+      } else if (this.z > 0.02) {
+        this.x = px; this.y = py;
+      } else {
+        const ex = f.hx + H_R - Math.abs(this.x - f.x), ey = f.hy + H_R - Math.abs(this.y - f.y);
+        if (ex < ey) this.x += (Math.sign(this.x - f.x) || 1) * ex; else this.y += (Math.sign(this.y - f.y) || 1) * ey;
+      }
+    }
+    return impact;
+  }
+
+  walls() {
+    const lx = W / 2 - H_R, ly = H / 2 - H_R;
+    let impact = 0;
+    if (this.x < -lx) { this.x = -lx; if (this.vx < 0) { impact = -this.vx; this.vx = -this.vx * 0.35; } }
+    if (this.x > lx) { this.x = lx; if (this.vx > 0) { impact = this.vx; this.vx = -this.vx * 0.35; } }
+    if (this.y < -ly) { this.y = -ly; if (this.vy < 0) { impact = Math.max(impact, -this.vy); this.vy = -this.vy * 0.35; } }
+    if (this.y > ly) { this.y = ly; if (this.vy > 0) { impact = Math.max(impact, this.vy); this.vy = -this.vy * 0.35; } }
+    return impact;
+  }
+
+  turn(dt, rate) {
+    this.facing += clamp(wrap(this.targetFacing - this.facing), -rate * dt, rate * dt) + this.spin * dt;
+    if (Math.abs(this.spin) > 0.5) this.targetFacing = this.facing;
+  }
+
+  step(dt) {
+    this.st += dt;
+    this.pokes = Math.max(0, this.pokes - dt * 0.35);
+    this.spin *= Math.exp(-dt * 2.5);
+    const tm = tilt.length();
+    const a = this.act;
+
+    if (this.state === 'held') {
+      const nx = damp(this.x, grab.x, 22, dt), ny = damp(this.y, grab.y, 22, dt);
+      grab.vx = damp(grab.vx, (nx - this.x) / dt, 14, dt);
+      grab.vy = damp(grab.vy, (ny - this.y) / dt, 14, dt);
+      this.x = clamp(nx, -W / 2 + H_R, W / 2 - H_R); this.y = clamp(ny, -H / 2 + H_R, H / 2 - H_R);
+      this.z = damp(this.z, liftZ(), 9, dt);
+      this.vx = this.vy = this.vz = 0;
+      this.targetFacing = -HALF_PI;
+      this.turn(dt, 5);
+      return;
+    }
+
+    if (this.state === 'act' && (a.seat || a.anim === 'lie')) {
+      if (a.seat) {
+        const f = a.seatF;
+        const [wx, wy] = toWorld(f, a.seat.lx, a.seat.ly);
+        this.x = wx; this.y = wy; this.z = a.seat.h; this.vx = f.vx; this.vy = f.vy;
+        this.facing = this.targetFacing = f.rot + a.seat.face;
+        if (Math.hypot(f.vx, f.vy) > 0.45 || tm > 0.5) {
+          this.endAct(true);
+          this.vx = f.vx * 1.2 + tilt.x * 0.6; this.vy = f.vy * 1.2 + tilt.y * 0.6;
+          this.thrown = true;
+          this.say(pick(['¡Uoooh!', '¡Eh!', '¡Que me caigo!']), 1.2); this.voice('alarm');
+          return;
+        }
+      } else {
+        this.z = groundAt(this.x, this.y).z; this.vx = this.vy = 0;
+        if (tm > 0.3) { this.endAct(true); this.fall('¡Eh!', false); return; }
+      }
+      this.tickAct(dt);
+      return;
+    }
+
+    if (this.on && furn.includes(this.on)) { this.x += this.on.dx; this.y += this.on.dy; }
+    let sup = groundAt(this.x, this.y);
+    const grounded = this.z <= sup.z + 0.004 && this.vz <= 0.01;
+    const standingAct = this.state === 'act';
+
+    if (grounded) {
+      this.z = sup.z; this.vz = 0; this.on = sup.f;
+      if (this.state === 'air') this.setState(this.thrown ? 'dizzy' : 'idle', this.thrown ? 1.6 : 0.6);
+      if ((UPRIGHT.has(this.state) || standingAct) && tm > 0.24) {
+        if (this.act) this.endAct(true);
+        this.setState('stumble');
+        this.say(pick(['¡Uoh!', '¡Eh, eh!', '¡Cuidado!', '¡Que me caigo!']), 1.2); this.voice('alarm');
+      }
+      if (this.state === 'stumble') {
+        if (tm > 0.46 || Math.hypot(this.vx, this.vy) > 0.65) this.fall(pick(['¡Aaah!', '¡Uaaa!', '¡Socorro!']), false);
+        else if (tm < 0.14 && this.st > 0.5) this.setState('idle', rand(0.5, 1));
+      }
+      const slide = this.state === 'stumble' || this.state === 'fallen' || this.state === 'getup';
+      if (slide) {
+        this.vx += tilt.x * G * dt; this.vy += tilt.y * G * dt;
+        this.friction((this.state === 'stumble' ? 0.08 : 0.13) * G, dt);
+        if (this.state === 'stumble') {
+          this.targetFacing = Math.atan2(-tilt.y, -tilt.x);
+          this.walkPhase += dt * 16;
+        }
+      } else {
+        let dx = 0, dy = 0;
+        if (this.state === 'walk' && this.target) [dx, dy] = this.walkDesire(dt);
+        else if (this.state === 'act' && this.move) { dx = this.move.x; dy = this.move.y; }
+        this.vx = damp(this.vx, dx + tilt.x * 0.25, 12, dt);
+        this.vy = damp(this.vy, dy + tilt.y * 0.25, 12, dt);
+      }
+    } else {
+      this.vz -= GZ * dt; this.on = null;
+      if (this.state !== 'air' && this.state !== 'fallen' && this.state !== 'help' && this.z - sup.z > 0.04) {
+        if (this.act) this.endAct(true);
+        this.setState('air');
+      }
+    }
+
+    const px = this.x, py = this.y;
+    this.x += this.vx * dt; this.y += this.vy * dt; this.z += this.vz * dt;
+    let impact = this.isHost || (this.arrived && !this.leaving) ? this.collideFurn(px, py) : 0;
+    impact = Math.max(impact, this.walls());
+
+    if (this.z + HUMAN_H > D && this.vz > 0) {
+      this.z = D - HUMAN_H; this.vz = -this.vz * 0.25;
+      audio.bonk(); shakeScreen();
+      this.say(pick(['¡Ay! ¡El cristal!', '¡Bonk!', '¡Mi cabeza!']), 1.4);
+      this.addNeed('fun', -6);
+      if (!this.isHost) this.angry = true;
+    }
+
+    sup = groundAt(this.x, this.y);
+    if (this.z < sup.z) {
+      const fallSpeed = -this.vz;
+      this.z = sup.z; this.vz = 0; this.on = sup.f;
+      if (this.state === 'air' || this.state === 'help') {
+        if (fallSpeed > 1.6 || (this.thrown && fallSpeed > 1.15)) { this.fall('¡Ay!'); audio.thud(0.35); if (!this.isHost) this.angry = true; }
+        else if (this.state === 'air') {
+          this.setState(this.thrown ? 'dizzy' : 'idle', this.thrown ? 1.6 : 0.7); audio.thud(0.1);
+          if (this.thrown) this.addNeed('fun', 3);
+        }
+        this.thrown = false;
+      } else if (this.state === 'fallen' && fallSpeed > 0.5) audio.thud(0.15);
+    }
+
+    if (impact > 0.75 && (this.state === 'air' || this.state === 'stumble' || this.state === 'fallen')) {
+      audio.thud(Math.min(0.5, impact * 0.3));
+      if (this.state !== 'fallen') this.fall(pick(['¡Ay!', '¡Uf!', '¡Auch!']));
+      else if (impact > 1) this.say(pick(['¡Ay!', '¡Auch!']), 0.9);
+    }
+
+    if (this.state === 'act') this.tickAct(dt);
+    else this.behave(dt, tm);
+    this.turn(dt, this.state === 'walk' ? 9 : 6);
+  }
+
+  walkDesire(dt) {
+    const t = this.target, ex = t.x - this.x, ey = t.y - this.y, d = Math.hypot(ex, ey);
+    if (d < 0.014) {
+      const done = t.done;
+      this.setState('idle', rand(0.8, 2));
+      if (done) done();
+      return [0, 0];
+    }
+    let ang = Math.atan2(ey, ex);
+    if (this.avoid > 0) { ang += this.avoidSign * 1.15; this.avoid -= dt; }
+    const sad = this.isHost && this.mood() < 25;
+    const sp = (t.fast ? 0.34 : sad ? 0.14 : 0.2) * Math.min(1, d / 0.05 + 0.35);
+    this.targetFacing = ang;
+    this.walkPhase += dt * sp * 60;
+    this.stuckT += dt;
+    if (this.stuckT > 0.45) {
+      const moved = Math.hypot(this.x - this.lastPos.x, this.y - this.lastPos.y);
+      if (moved < sp * this.stuckT * 0.3) { this.avoid = 0.55; this.avoidSign = Math.random() < 0.5 ? -1 : 1; }
+      this.lastPos.x = this.x; this.lastPos.y = this.y; this.stuckT = 0;
+    }
+    if (this.st > t.timeout) { this.setState('idle', 1); this.userCmd = false; }
+    return [Math.cos(ang) * sp, Math.sin(ang) * sp];
+  }
+
+  tickAct(dt) {
+    const a = this.act;
+    if (!a) return;
+    a.t += dt;
+    const def = a.def;
+    if (def.rates) {
+      for (const k in def.rates) {
+        if (k === 'money') { if (this.isHost) earn(def.rates.money * dt); }
+        else this.addNeed(k, def.rates[k] * dt);
+      }
+    }
+    if (a.anim === 'kick') this.kickTick(dt);
+    if (a.anim === 'dance') { this.walkPhase += dt * 8; this.targetFacing += dt * (Math.sin(a.t * 1.3) > 0 ? 2.5 : -2.5); }
+    if (def.id === 'talk') this.talkTick(dt);
+    if (a.t >= a.dur || (def.until && def.until(this))) this.endAct(false);
+  }
+
+  kickTick() {
+    const a = this.act, b = a.f;
+    if (!furn.includes(b)) { this.endAct(true); return; }
+    if (!a.goal || Math.random() < 0.004) a.goal = { x: rand(-W / 2 + 0.1, W / 2 - 0.1), y: rand(-H / 2 + 0.1, H / 2 - 0.1) };
+    let gx = a.goal.x - b.x, gy = a.goal.y - b.y;
+    const gd = Math.hypot(gx, gy) || 1; gx /= gd; gy /= gd;
+    const bx = b.x - gx * 0.06, by = b.y - gy * 0.06;
+    let dx = bx - this.x, dy = by - this.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 0.025) {
+      // Chuta hacia la meta
+      dx = gx; dy = gy;
+      if (Math.random() < 0.15) this.say(pick(['¡Gol!', '¡Toma!', '¡Ja!']), 0.9);
+    } else { dx /= d; dy /= d; }
+    const sp = 0.3;
+    this.move = { x: dx * sp, y: dy * sp };
+    this.targetFacing = Math.atan2(dy, dx);
+    this.walkPhase += 0.32;
+    if (Math.hypot(b.vx, b.vy) < 0.02 && d < 0.04) a.goal = null;
+  }
+
+  talkTick(dt) {
+    const a = this.act, o = a.partner;
+    if (!o || !agents.includes(o) || !o.act || o.act.partner !== this) { this.endAct(false); return; }
+    this.targetFacing = Math.atan2(o.y - this.y, o.x - this.x);
+    if (a.leader) {
+      a.talkT -= dt;
+      if (a.talkT <= 0) {
+        a.talkT = rand(1.1, 1.7);
+        a.turn = !a.turn;
+        const sp = a.turn ? this : o;
+        const t = pick(TOPICS);
+        sp.say(Math.random() < 0.5 ? t : `${t} ${pick(['¡Ja, ja!', '¿Sí?', '¡No me digas!', 'Bla, bla…', '¡Qué fuerte!', 'Ajá…'])}`, 1.3);
+        sp.voice(Math.random() < 0.7 ? 'happy' : 'alarm');
+        sp.gest = 0.8;
+      }
+    }
+  }
+
+  behave(dt, tm) {
+    switch (this.state) {
+      case 'idle': case 'look':
+        if (this.nextWalk) { const p = this.nextWalk; this.nextWalk = null; this.walkTo(p.x, p.y, () => this.setState('idle', 1.5), { fast: true }); break; }
+        if (this.waitFor) { if (!agents.includes(this.waitFor) || this.st > 8) this.waitFor = null; else break; }
+        if (this.isHost && finger.follow) { this.followFinger(); break; }
+        if (this.st > this.dur) this.isHost ? this.think() : this.visitorThink();
+        break;
+      case 'wave': case 'shame':
+        if (this.st > this.dur) this.setState('idle', rand(1, 2));
+        break;
+      case 'help':
+        if (this.z <= groundAt(this.x, this.y).z + 0.002 && this.vz <= 0 && this.st < this.dur - 0.5 && (this.st % 0.75) < dt * 1.5) this.vz = 0.75;
+        if (this.st > this.dur && this.vz === 0) this.setState('idle', rand(1, 2));
+        break;
+      case 'door':
+        if (this.flag === 0 && this.st > 1.2) { this.flag = 1; this.say(pick(['Cerrada…', 'No se abre…', 'Clic, clic… nada']), 1.6); this.voice('sad'); }
+        if (this.flag === 1 && this.st > 2.6) { this.flag = 2; this.targetFacing = -HALF_PI; if (face.present) this.say('¿Me ayudas?', 1.4); }
+        if (this.st > this.dur) this.setState('idle', rand(0.5, 1.5));
+        break;
+      case 'reach':
+        if (!finger.follow) { this.setState('idle', 1); this.say('♥', 1); break; }
+        this.targetFacing = Math.atan2(finger.y - this.y, finger.x - this.x);
+        if (Math.hypot(finger.x - this.x, finger.y - this.y) > 0.09) this.followFinger();
+        else this.addNeed('social', dt * 1.5);
+        break;
+      case 'dizzy':
+        if (this.st > this.dur) this.setState('idle', 1);
+        break;
+      case 'fallen': {
+        const sp = Math.hypot(this.vx, this.vy);
+        if (sp < 0.08 && tm < 0.2) this.still += dt; else this.still = 0;
+        if (this.st > 0.6 && this.still > this.fallT) this.setState('getup');
+        break;
+      }
+      case 'getup':
+        if (this.st > 0.75) {
+          if (this.hard) { this.setState('dizzy', 1.6); this.say(pick(['@_@', 'Uff…', 'Todo da vueltas…']), 1.4); }
+          else this.setState('idle', 0.8);
+        }
+        break;
+    }
+  }
+
+  followFinger() {
+    const ang = Math.atan2(this.y - finger.y, this.x - finger.x);
+    const x = finger.x + Math.cos(ang) * 0.06, y = finger.y + Math.sin(ang) * 0.06;
+    this.walkTo(x, y, () => { this.setState('reach'); this.say(pick(['♥', '¡Hola, dedo!', '¡Choca!']), 1.2); this.voice('happy'); }, { fast: true });
+  }
+
+  /* ---------- Necesidades y decisiones (tu humano) ---------- */
+  updateNeeds(dt) {
+    const n = this.needs;
+    const sleeping = this.act && this.act.anim === 'lie';
+    for (const k of NEED_KEYS) {
+      let r = NEED_INFO[k].decay * settings.speed;
+      if (k === 'energy' && sleeping) r = 0;
+      if (k === 'fun' && sleeping) r *= 0.3;
+      if (k === 'social' && sleeping) r *= 0.3;
+      n[k] = clamp(n[k] - r * dt, 0, 100);
+    }
+    if (face.present && !sleeping) this.addNeed('social', 0.45 * dt);
+
+    if (n.bladder <= 0 && this.state !== 'held') this.accident();
+    if (n.energy <= 0 && !sleeping && this.state !== 'held' && this.state !== 'air') this.faint();
+
+    this.complainT -= dt;
+    if (this.complainT <= 0) {
+      this.complainT = rand(9, 16);
+      let low = null;
+      for (const k of NEED_KEYS) if (n[k] < 28 && (!low || n[k] < n[low])) low = k;
+      if (low && !sleeping && this.bubbleT <= 0) {
+        if (Math.random() < 0.5) this.say(`${NEED_INFO[low].icon}…`, 2, true);
+        else this.say(pick(NEED_INFO[low].low), 1.8);
+        this.voice('sad');
+      }
+    }
+  }
+
+  accident() {
+    if (this.act) this.endAct(true);
+    addPuddle(this.x, this.y);
+    this.needs.bladder = 100;
+    this.addNeed('hygiene', -30);
+    this.addNeed('fun', -12);
+    this.setState('shame', 2.6);
+    this.say(pick(['¡Ups…!', 'Qué vergüenza…', 'No llegué…']), 2);
+    this.voice('sad');
+    toast(`¡${this.name} no llegó al baño! Toca el charco para limpiarlo.`);
+  }
+
+  faint() {
+    if (this.act) this.endAct(true);
+    this.say('Zzz… (se ha dormido en el suelo)', 2);
+    this.setState('act');
+    this.act = { f: null, def: FAINT, plan: { anim: 'lie' }, t: 0, dur: FAINT.dur, anim: 'lie', partner: null };
+  }
+
+  think() {
+    const n = this.needs;
+    const options = [];
+    for (const f of furn) {
+      for (const def of f.def.actions) {
+        if (def.instant || !def.adv) continue;
+        if (def.cost && money < def.cost) continue;
+        if (def.refuse && def.refuse(this)) continue;
+        let s = 0;
+        for (const k in def.adv) {
+          if (k === 'money') s += money < 30 ? 0.9 : money < 120 ? 0.32 : 0.06;
+          else s += (def.adv[k] / 100) * urgency(n[k]);
+        }
+        if (s <= 0) continue;
+        s /= 1 + Math.hypot(f.x - this.x, f.y - this.y) * 0.6;
+        if (f.busy && f.busy !== this) s *= 0.15;
+        if (f.type === 'toilet' && n.bladder < 20) s += 2;
+        options.push({ s: s * rand(0.8, 1.2), f, def });
+      }
+    }
+    const guest = agents.find((o) => o !== this && o.canTalk() && !o.leaving && o.arrived);
+    if (guest) options.push({ s: urgency(n.social) * 0.9 + 0.3, talk: guest });
+    options.sort((a, b) => b.s - a.s);
+    for (const o of options.slice(0, 4)) {
+      if (o.s < 0.16) break;
+      if (o.talk) { if (this.startTalk(o.talk)) return; continue; }
+      if (this.perform(o.f, o.def)) return;
+    }
+    this.idleBehaviour();
+  }
+
+  idleBehaviour() {
+    const opts = [['wander', 3], ['look', 1.2], ['door', 0.35], ['lamp', 0.3]];
+    if (face.present) opts.push(['wave', 1.2], ['help', 0.6]); else opts.push(['help', 0.25]);
+    let total = opts.reduce((s, o) => s + o[1], 0), r = Math.random() * total, choice = 'wander';
+    for (const [k, w] of opts) { if ((r -= w) <= 0) { choice = k; break; } }
+    switch (choice) {
+      case 'wander': {
+        for (let i = 0; i < 25; i++) {
+          const x = rand(-W / 2 + 0.06, W / 2 - 0.06), y = rand(-H / 2 + 0.06, H / 2 - 0.06);
+          if (isFree(x, y, 0.05)) { this.walkTo(x, y, () => this.setState('idle', rand(1, 3))); return; }
+        }
+        break;
+      }
+      case 'door': {
+        const x = door.x, y = H / 2 - 0.055;
+        if (!isFree(x, y, H_R) || visitors().length) break;
+        this.walkTo(x, y, () => { this.setState('door', 3.2); this.targetFacing = HALF_PI; });
+        return;
+      }
+      case 'lamp': {
+        const l = furn.find((f) => f.type === 'lamp');
+        if (!l) break;
+        this.perform(l, l.def.actions[0]);
+        return;
+      }
+      case 'wave':
+        this.setState('wave', 2.4); this.targetFacing = -HALF_PI;
+        this.say(pick(['¡Hola!', '¡Eh, tú!', '¡Te veo!', '¡Hola, gigante!']), 1.6); this.voice('happy');
+        return;
+      case 'help': {
+        const go = () => { this.setState('help', 3.4); this.targetFacing = -HALF_PI; this.say(pick(['¡Sácame de aquí!', '¡Socorro!', '¡Déjame salir!']), 2.2); this.voice('alarm'); };
+        if (isFree(0, 0, 0.05)) this.walkTo(rand(-0.05, 0.05), rand(-0.05, 0.05), go); else go();
+        return;
+      }
+      case 'look':
+        this.setState('look', rand(2, 4));
+        return;
+    }
+    this.setState('idle', rand(0.8, 2));
+  }
+
+  /* ---------- Visitas ---------- */
+  visitorThink() {
+    if (this.leaving) return;
+    if (this.angry || clock > this.leaveAt || (host && host.needs.hygiene < 15 && Math.random() < 0.3)) {
+      if (host && host.needs.hygiene < 15 && !this.angry && clock <= this.leaveAt) this.say('¡Qué olor! Me voy…', 2);
+      this.leave();
+      return;
+    }
+    const opts = [];
+    if (host && host.canTalk() && !host.userCmd) opts.push({ w: 3, talk: true });
+    for (const f of furn) for (const def of f.def.actions) {
+      if (!def.visitor) continue;
+      if (def.cost && money < def.cost) continue;
+      if (f.busy && f.busy !== this) continue;
+      opts.push({ w: def.id === 'eat' ? 0.4 : 0.8, f, def });
+    }
+    opts.push({ w: 0.8, wander: true });
+    let total = opts.reduce((s, o) => s + o.w, 0), r = Math.random() * total, c = opts[opts.length - 1];
+    for (const o of opts) { if ((r -= o.w) <= 0) { c = o; break; } }
+    if (c.talk && this.startTalk(host)) return;
+    if (c.f && this.perform(c.f, c.def)) return;
     for (let i = 0; i < 20; i++) {
-      const a = rand(0, Math.PI * 2), x = h.x + Math.cos(a) * 0.35, y = h.y + Math.sin(a) * 0.35;
-      if (isFree(x, y, 0.05)) { h.nextWalk = { x, y }; break; }
+      const x = rand(-W / 2 + 0.06, W / 2 - 0.06), y = rand(-H / 2 + 0.06, H / 2 - 0.06);
+      if (isFree(x, y, 0.05)) { this.walkTo(x, y, () => this.setState('idle', rand(1, 3))); return; }
     }
+    this.setState('idle', 1);
   }
+
+  leave() {
+    if (this.leaving) return;
+    this.leaving = true;
+    if (this.act) this.endAct(true);
+    this.say(this.angry ? pick(['¡Me voy!', '¡Qué maleducado!', '¡Adiós, bruto!']) : pick(['¡Adiós!', '¡Hasta pronto!', '¡Chao!']), 1.6);
+    this.voice(this.angry ? 'angry' : 'happy');
+    this.walkTo(door.x, H / 2 - 0.035, () => { this.gone = true; }, { timeout: 15 });
+  }
+
+  /* ---------- Pose y animación ---------- */
+  updateVisual(dt, t) {
+    const r = this.rig, s = this.state, a = this.act;
+    const lv = s === 'held' ? 30 : 18;
+    this.vis.x = damp(this.vis.x, this.x, lv, dt);
+    this.vis.y = damp(this.vis.y, this.y, lv, dt);
+    this.vis.z = damp(this.vis.z, this.z, lv, dt);
+    this.visFacing += wrap(this.facing - this.visFacing) * Math.min(1, dt * 14);
+    this.gest = Math.max(0, (this.gest || 0) - dt);
+
+    const p = standPose();
+    const sad = this.isHost && this.mood() < 25;
+    p.torso = Math.sin(t * 2.2 + this.x * 9) * 0.02 + (sad ? 0.22 : 0);
+    if (sad) { p.pitch = 0.35; p.raiseL = p.raiseR = 0.05; }
+    const callsYou = s === 'wave' || s === 'help' || (s === 'held' && this.isHost) || (s === 'door' && this.flag === 2);
+    const lookUser = callsYou || (this.isHost && face.present && (s === 'idle' || s === 'look' || s === 'dizzy'));
+    const pose = a ? a.def.pose : null;
+    const anim = a ? a.anim : null;
+    let lookTarget = null;
+
+    if (s === 'walk' || s === 'stumble' || anim === 'kick') {
+      const ph = this.walkPhase, amp = s === 'stumble' ? 0.75 : 0.55;
+      p.hipL = Math.sin(ph) * amp; p.hipR = -Math.sin(ph) * amp;
+      p.kneeL = 0.12 + Math.max(0, -Math.sin(ph + 0.6)) * 0.7;
+      p.kneeR = 0.12 + Math.max(0, Math.sin(ph + 0.6)) * 0.7;
+      p.armL = -p.hipL * 0.8; p.armR = -p.hipR * 0.8;
+      p.pelvisY = 0.104 - Math.abs(Math.cos(ph)) * 0.005;
+      p.torso += -0.08;
+      if (s === 'stumble') { p.raiseL = 1.3 + Math.sin(t * 13) * 0.4; p.raiseR = 1.3 + Math.cos(t * 11) * 0.4; p.torso = Math.sin(t * 9) * 0.15; }
+    }
+    if (anim === 'sit') {
+      p.hipL = p.hipR = -1.5; p.kneeL = 1.45 + Math.sin(t * 3) * 0.1; p.kneeR = 1.45 - Math.sin(t * 3) * 0.1;
+      p.pelvisY = 0.012; p.armL = p.armR = -0.35; p.raiseL = p.raiseR = 0.15; p.torso = 0;
+    } else if (anim === 'lie') {
+      p.bodyRot = 0; p.lift = 0.03; p.raiseL = p.raiseR = 0.25; p.torso = Math.sin(t * 1.2) * 0.03; p.pitch = 0.2; p.yaw = 0;
+    } else if (anim === 'dance') {
+      p.raiseL = 1.6 + Math.sin(t * 9) * 1.0; p.raiseR = 1.6 - Math.sin(t * 9) * 1.0;
+      p.hipL = Math.sin(t * 9) * 0.35; p.hipR = -Math.sin(t * 9) * 0.35; p.kneeL = p.kneeR = 0.3;
+      p.pelvisY = 0.1 + Math.abs(Math.sin(t * 9)) * 0.01; p.torso = Math.sin(t * 4.5) * 0.15;
+    }
+    if (pose === 'type') { p.armL = p.armR = -1.25 + Math.sin(t * 22) * 0.06; p.raiseL = p.raiseR = 0.05; p.pitch = 0.1; }
+    if (pose === 'eat') {
+      p.armL = -1.0; p.raiseL = 0.1; p.armR = -1.6 - Math.max(0, Math.sin(t * 3.5)) * 0.9; p.raiseR = 0.2; p.pitch = 0.25;
+    }
+    if (pose === 'reach') { p.armR = a.t < a.dur * 0.7 ? -1.35 : -0.3; p.raiseR = 0.05; }
+    if (pose === 'read') { p.armL = p.armR = -1.1; p.raiseL = p.raiseR = 0.05; p.pitch = 0.45; }
+    if (pose === 'shower') { p.raiseL = 2.5 + Math.sin(t * 14) * 0.3; p.raiseR = 2.5 + Math.cos(t * 13) * 0.3; p.armL = p.armR = -0.3; p.pitch = -0.4; }
+    if (pose === 'talk') {
+      p.armR = this.gest > 0 ? -0.9 + Math.sin(t * 12) * 0.4 : -0.1; p.raiseR = this.gest > 0 ? 0.4 : 0.12;
+      if (a.partner) lookTarget = { x: a.partner.vis.x, y: a.partner.vis.y, z: a.partner.vis.z + 0.25 };
+    }
+    if (pose === 'watch' && a.f) lookTarget = { x: a.f.x, y: a.f.y, z: 0.12 };
+    if (s === 'fallen') {
+      p.bodyRot = 0; p.lift = 0.03; p.spread = 0.35; p.raiseL = 1.25 + Math.sin(t * 2) * 0.1; p.raiseR = 1.25; p.hipL = -0.1; p.kneeR = 0.4;
+    } else if (s === 'getup') {
+      p.pelvisY = 0.07; p.hipL = p.hipR = -0.9; p.kneeL = p.kneeR = 1.5; p.torso = 0.5; p.armL = p.armR = -0.6;
+    } else if (s === 'held') {
+      p.spread = 0.15; p.hipL = Math.sin(t * 13) * 0.55; p.hipR = -Math.sin(t * 13) * 0.55; p.kneeL = p.kneeR = 0.35;
+      p.raiseL = 2.5 + Math.sin(t * 15) * 0.35; p.raiseR = 2.5 + Math.cos(t * 14) * 0.35; p.pitch = -0.7;
+    } else if (s === 'air') {
+      p.raiseL = 2.2 + Math.sin(t * 18) * 0.3; p.raiseR = 2.2 + Math.cos(t * 17) * 0.3; p.spread = 0.3; p.hipL = -0.4; p.hipR = 0.2; p.kneeL = p.kneeR = 0.6;
+    } else if (s === 'wave') {
+      p.raiseR = 2.7 + Math.sin(t * 11) * 0.35; p.pitch = -1;
+    } else if (s === 'help') {
+      p.raiseL = 2.6 + Math.sin(t * 12) * 0.35; p.raiseR = 2.6 + Math.sin(t * 12 + 2) * 0.35; p.pitch = -1.1;
+      if (this.vz !== 0) { p.kneeL = p.kneeR = 0.5; p.hipL = p.hipR = -0.3; }
+    } else if (s === 'door') {
+      p.armR = this.flag === 0 ? -1.35 + Math.sin(t * 20) * 0.08 : -0.2; p.raiseR = 0.05;
+      if (this.flag === 1) { p.torso = 0.2; p.pitch = 0.4; }
+    } else if (s === 'reach') {
+      p.raiseL = p.raiseR = 2.75; p.armL = p.armR = -0.3; p.pitch = -1.2; p.pelvisY = 0.104 + Math.abs(Math.sin(t * 4)) * 0.006;
+    } else if (s === 'dizzy') {
+      p.torso = Math.sin(t * 6) * 0.18; p.raiseL = 0.5; p.raiseR = 0.5; p.yaw = Math.sin(t * 5) * 0.4;
+    } else if (s === 'shame') {
+      p.armL = p.armR = -2.3; p.raiseL = p.raiseR = 0.35; p.pitch = 0.5; p.torso = 0.25;
+    }
+
+    // Mirar: al dedo, a ti, a la otra persona o a puntos al azar
+    let target = null;
+    if (lookTarget) target = lookTarget;
+    else if (this.isHost && (s === 'reach' || (finger.follow && UPRIGHT.has(s)))) target = { x: finger.x, y: finger.y, z: D };
+    else if (this.look && t < this.lookT) target = this.look;
+    else if (lookUser) target = { x: eye.x, y: eye.y, z: D + eye.z };
+    else if (this.waitFor) target = { x: this.waitFor.vis.x, y: this.waitFor.vis.y, z: 0.25 };
+    else if ((s === 'idle' || s === 'look') && Math.random() < dt * (s === 'look' ? 0.9 : 0.3)) {
+      this.look = { x: rand(-W / 2, W / 2), y: rand(-H / 2, H / 2), z: rand(0, D * 0.8) };
+      this.lookT = t + rand(0.8, 2);
+    }
+    if (target && s !== 'fallen' && anim !== 'lie' && s !== 'getup' && s !== 'shame') {
+      const hx = this.vis.x, hy = this.vis.y, hz = this.vis.z + 0.25;
+      const dx = target.x - hx, dy = target.y - hy, dz = target.z - hz, hor = Math.hypot(dx, dy);
+      const yaw = hor > 0.02 ? wrap(Math.atan2(dy, dx) - this.visFacing) : 0;
+      if ((s === 'idle' || s === 'look') && Math.abs(yaw) > 1.3) this.targetFacing = Math.atan2(dy, dx);
+      p.yaw = clamp(yaw, -1.3, 1.3) * clamp(hor / (Math.abs(dz) * 0.6 + 0.01), 0.15, 1);
+      p.pitch = clamp(-Math.atan2(dz, hor), -1.25, 0.6);
+    }
+
+    const rate = s === 'fallen' || s === 'getup' || anim === 'lie' ? 9 : 16;
+    for (const k of POSE_KEYS) this.pose[k] = damp(this.pose[k], p[k], rate, dt);
+    const P = this.pose;
+
+    let lx = 0, ly = 0;
+    if (s === 'held') { lx = clamp(grab.vx * 0.35, -0.7, 0.7); ly = clamp(-grab.vy * 0.35, -0.7, 0.7); }
+    else if (UPRIGHT.has(s) || s === 'stumble' || (s === 'act' && !a.seat && anim !== 'lie')) { lx = clamp(-tilt.x, -0.5, 0.5) * 0.9; ly = clamp(tilt.y, -0.5, 0.5) * 0.9; }
+    r.lean.rotation.y = damp(r.lean.rotation.y, lx, 10, dt);
+    r.lean.rotation.x = damp(r.lean.rotation.x, ly, 10, dt);
+
+    r.root.position.set(this.vis.x, this.vis.y, this.vis.z + P.lift);
+    r.heading.rotation.z = this.visFacing + HALF_PI;
+    r.body.rotation.x = P.bodyRot;
+    r.pelvis.position.y = P.pelvisY;
+    r.chest.rotation.x = P.torso;
+    r.hipL.rotation.set(P.hipL, 0, P.spread);
+    r.hipR.rotation.set(P.hipR, 0, -P.spread);
+    r.kneeL.rotation.x = P.kneeL;
+    r.kneeR.rotation.x = P.kneeR;
+    r.shL.rotation.set(P.armL, 0, P.raiseL);
+    r.shR.rotation.set(P.armR, 0, -P.raiseR);
+    r.head.rotation.set(P.pitch, P.yaw, 0, 'YXZ');
+
+    r.plate.visible = this.holding === 'plate';
+    r.book.visible = this.holding === 'book';
+    const dizzy = s === 'dizzy' || (s === 'getup' && this.hard) || (s === 'fallen' && this.hard && this.st > 0.5);
+    r.stars.visible = dizzy;
+    if (dizzy) r.stars.rotation.y = t * 5;
+
+    const stinky = this.isHost && this.needs.hygiene < 25;
+    r.stink.forEach((m, i) => {
+      m.visible = stinky;
+      if (!stinky) return;
+      const ph = (t * 0.5 + i / 4) % 1;
+      m.position.set(Math.sin(t * 3 + i * 2) * 0.03 + (i - 1.5) * 0.02, Math.cos(i * 1.7) * 0.03, 0.12 + ph * 0.25);
+      m.scale.setScalar(1 - ph * 0.6);
+    });
+    const showering = pose === 'shower';
+    r.drops.forEach((m, i) => {
+      m.visible = showering;
+      if (!showering) return;
+      const ph = (t * 1.8 + i / 8) % 1;
+      m.position.set(Math.cos(i * 2.4) * 0.035, Math.sin(i * 2.4) * 0.035, 0.32 - ph * 0.32);
+    });
+  }
+
+  updateBubble(dt) {
+    if (this.bubbleT <= 0) return;
+    this.bubbleT -= dt;
+    if (this.bubbleT <= 0) { this.bubbleEl.classList.remove('show'); return; }
+    const lying = this.state === 'fallen' || (this.act && this.act.anim === 'lie');
+    projV.set(this.vis.x, this.vis.y, this.vis.z + (lying ? 0.08 : HUMAN_H + 0.03)).project(camera);
+    const R = viewRect;
+    const x = R.left + (projV.x * 0.5 + 0.5) * R.width, y = R.top + (-projV.y * 0.5 + 0.5) * R.height;
+    const bw = this.bubbleEl.offsetWidth;
+    const cx = clamp(x, bw / 2 + 6, innerWidth - bw / 2 - 6);
+    this.bubbleEl.style.transform = `translate(${Math.round(cx - bw / 2)}px, ${Math.round(Math.max(R.top + 4, y - this.bubbleEl.offsetHeight - 10))}px)`;
+  }
+}
+const projV = new THREE.Vector3();
+
+function beginTalk(a, b) {
+  for (const [x, y] of [[a, b], [b, a]]) {
+    if (x.act) x.endAct(true);
+    x.setState('act');
+    x.act = { f: null, def: TALK, plan: { anim: 'stand' }, t: 0, dur: rand(9, 14), anim: 'stand', partner: y, talkT: 0.2, leader: x === a, turn: false };
+    x.targetFacing = Math.atan2(y.y - x.y, y.x - x.x);
+  }
+  b.act.dur = a.act.dur + 1;
+}
+
+function separateAgents() {
+  for (let i = 0; i < agents.length; i++) for (let j = i + 1; j < agents.length; j++) {
+    const a = agents[i], b = agents[j];
+    if (a.state === 'held' || b.state === 'held' || (a.act && a.act.seat) || (b.act && b.act.seat)) continue;
+    if (Math.abs(a.z - b.z) > 0.1) continue;
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = H_R * 1.9;
+    if (d >= min || d < 1e-6) continue;
+    const push = (min - d) / 2, nx = dx / d, ny = dy / d;
+    a.x -= nx * push; a.y -= ny * push; b.x += nx * push; b.y += ny * push;
+  }
+}
+
+const visitors = () => agents.filter((a) => !a.isHost);
+
+/* ---------- Dinero y charcos ---------- */
+function earn(v) { money += v; }
+function spend(v, msg) {
+  money = Math.max(0, money - v);
+  audio.cash(false);
+  if (msg) toast(msg);
+}
+
+const puddles = [];
+const puddleMat = new THREE.MeshLambertMaterial({ color: '#e8d75a', transparent: true, opacity: 0.8 });
+function addPuddle(x, y) {
+  const m = new THREE.Mesh(new THREE.CircleGeometry(0.05, 8), puddleMat);
+  m.position.set(x, y, groundAt(x, y).z + 0.002);
+  m.rotation.z = rand(0, 3);
+  m.scale.set(1.3, 0.9, 1);
+  m.receiveShadow = true;
+  scene.add(m);
+  puddles.push({ x, y, m });
+}
+function cleanPuddle(p) {
+  scene.remove(p.m);
+  puddles.splice(puddles.indexOf(p), 1);
+  audio.blip(900, 1400, 0.12, 'triangle', 0.12);
+  toast('¡Limpio!');
 }
 
 /* =====================================================================
- *  Sensores: inclinación y sacudidas
- * ===================================================================== */
-const sensor = { raw: new THREE.Vector3(0, 0, -1), g0: null, has: false, key: new THREE.Vector2(), keyT: new THREE.Vector2(), shakeT: 0 };
-const tilt = new THREE.Vector2();
-const tiltRaw = new THREE.Vector2();
-const DOWN = new THREE.Vector3(0, 0, -1);
-const tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3();
-
-function screenAngle() {
-  const a = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : (window.orientation || 0);
-  return a * DEG;
-}
-function toScreen(x, y) {
-  const a = screenAngle(), c = Math.cos(a), s = Math.sin(a);
-  return [x * c - y * s, x * s + y * c];
-}
-
-function onOrientation(e) {
-  if (e.beta == null || e.gamma == null) return;
-  const b = e.beta * DEG, g = e.gamma * DEG;
-  // Gravedad en coordenadas del dispositivo (x derecha, y arriba, z fuera de la pantalla)
-  const gx = Math.sin(g) * Math.cos(b), gy = -Math.sin(b), gz = -Math.cos(g) * Math.cos(b);
-  const [sx, sy] = toScreen(gx, gy);
-  sensor.raw.set(sx, sy, gz).normalize();
-  if (!sensor.has) { sensor.has = true; sensor.g0 = sensor.raw.clone(); }
-}
-
-function onMotion(e) {
-  const a = e.acceleration;
-  if (!a || a.x == null) return;
-  const now = performance.now();
-  const [ax, ay] = toScreen(a.x, a.y);
-  const m = Math.hypot(ax, ay, a.z || 0);
-  if (m < 9 || now - sensor.shakeT < 140) return;
-  sensor.shakeT = now;
-  // Por inercia, el contenido se queda atrás respecto al movimiento del móvil
-  const k = 0.018;
-  for (const f of furn) { if (!f.drag) { f.vx -= ax * k / Math.sqrt(f.mass); f.vy -= ay * k / Math.sqrt(f.mass); f.wob = 1; } }
-  const h = human;
-  if (h.state === 'held') return;
-  if (h.state === 'sit' || h.state === 'sleep') standUpFromSeat();
-  h.vx -= ax * k * 1.6; h.vy -= ay * k * 1.6;
-  if (Math.abs(a.z || 0) > 6 && h.state !== 'air') { if (UPRIGHT.has(h.state)) setState('air'); h.vz = Math.min(1.2, Math.abs(a.z) * 0.06); }
-  if (m > 15 && h.state !== 'fallen' && h.state !== 'air') fall(pick(['¡Terremoto!', '¡Aaah!', '¡Uaaa!']));
-  else if (UPRIGHT.has(h.state) && h.state !== 'air') { setState('stumble'); }
-}
-
-function updateTilt(dt) {
-  let tx = sensor.key.x, ty = sensor.key.y;
-  if (sensor.has && sensor.g0) {
-    tmpQ.setFromUnitVectors(sensor.g0, DOWN);
-    tmpV.copy(sensor.raw).applyQuaternion(tmpQ);
-    tx = tmpV.x; ty = tmpV.y;
-    // Pequeñas inclinaciones mantenidas se absorben poco a poco (cómo sostienes el móvil)
-    if (Math.hypot(tx, ty) < 0.09) sensor.g0.lerp(sensor.raw, Math.min(1, dt * 0.15)).normalize();
-  } else {
-    sensor.key.x = damp(sensor.key.x, sensor.keyT.x, 6, dt);
-    sensor.key.y = damp(sensor.key.y, sensor.keyT.y, 6, dt);
-  }
-  tiltRaw.set(tx, ty);
-  const m = Math.hypot(tx, ty), dz = 0.05, f = m > dz ? (m - dz) / m : 0;
-  tilt.x = damp(tilt.x, tx * f, 12, dt);
-  tilt.y = damp(tilt.y, ty * f, 12, dt);
-}
-
-function recalibrate() {
-  if (sensor.has) sensor.g0 = sensor.raw.clone();
-  sensor.keyT.set(0, 0);
-}
-
-/* =====================================================================
- *  Seguimiento de ojos (cámara frontal + MediaPipe Face Landmarker)
- * ===================================================================== */
-const video = $('cam');
-const face = { present: false, x: 0, y: 0, z: 0, cm: 32, lastSeen: 0, goneAt: 0, enabled: false, loading: false, landmarker: null, stream: null, lastT: -1, lastDetect: 0, closeT: 0 };
-const eye = { x: 0, y: 0, z: 5 };
-let depthK = 1.6;
-const mouse = { x: 0, y: 0, active: false };
-
-async function startFace() {
-  if (face.loading) return;
-  face.loading = true;
-  setEyeDot();
-  try {
-    if (!face.stream) {
-      face.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
-      video.srcObject = face.stream;
-      await video.play();
-    }
-    if (!face.landmarker) {
-      const { FilesetResolver, FaceLandmarker } = await import(`${MP_BASE}/vision_bundle.mjs`);
-      const fileset = await FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
-      const opts = (delegate) => ({ baseOptions: { modelAssetPath: FACE_MODEL, delegate }, runningMode: 'VIDEO', numFaces: 1 });
-      try { face.landmarker = await FaceLandmarker.createFromOptions(fileset, opts('GPU')); }
-      catch { face.landmarker = await FaceLandmarker.createFromOptions(fileset, opts('CPU')); }
-    }
-    face.enabled = true;
-    tip('Mira la pantalla y mueve la cabeza: la habitación tiene profundidad.', 4500);
-  } catch (err) {
-    console.warn(err);
-    face.enabled = false;
-    tip('No se pudo usar la cámara. La perspectiva seguirá la inclinación del móvil.', 4500);
-  }
-  face.loading = false;
-  setEyeDot();
-}
-
-function stopFace() {
-  face.enabled = false;
-  face.present = false;
-  if (face.stream) { face.stream.getTracks().forEach((t) => t.stop()); face.stream = null; video.srcObject = null; }
-  setEyeDot();
-}
-
-function setEyeDot() {
-  const dot = $('eye-dot');
-  dot.className = 'dot' + (face.loading ? ' load' : face.present ? ' track' : '');
-  $('btn-eyes').classList.toggle('on', face.enabled);
-}
-
-const FOV_MAX = 66 * DEG; // campo de visión aproximado (lado largo) de una cámara frontal
-function detectFace(now) {
-  if (!face.enabled || !face.landmarker || video.readyState < 2) return;
-  if (now - face.lastDetect < 30 || video.currentTime === face.lastT) return;
-  face.lastDetect = now; face.lastT = video.currentTime;
-  let res;
-  try { res = face.landmarker.detectForVideo(video, now); } catch { return; }
-  const lm = res && res.faceLandmarks && res.faceLandmarks[0];
-  const wasPresent = face.present;
-  if (!lm) {
-    if (face.present && now - face.lastSeen > 500) { face.present = false; face.goneAt = now; setEyeDot(); }
-    return;
-  }
-  const vw = video.videoWidth, vh = video.videoHeight;
-  let L, R;
-  if (lm.length >= 478) { L = lm[468]; R = lm[473]; }
-  else { L = mid(lm[33], lm[133]); R = mid(lm[362], lm[263]); }
-  const mx = (L.x + R.x) / 2, my = (L.y + R.y) / 2;
-  const ipdPx = Math.hypot((L.x - R.x) * vw, (L.y - R.y) * vh);
-  const fpx = (Math.max(vw, vh) / 2) / Math.tan(FOV_MAX / 2);
-  const dcm = clamp((6.3 * fpx) / Math.max(ipdPx, 1), 10, 90);
-  let xcm = -(mx - 0.5) * vw * dcm / fpx;
-  let ycm = -(my - 0.5) * vh * dcm / fpx;
-  // La cámara está encima de la pantalla: pasamos a coordenadas centradas en la pantalla
-  const sw = innerWidth / PX_PER_CM, sh = innerHeight / PX_PER_CM;
-  const a = screenAngle();
-  let cx = 0, cy = sh / 2 + 0.5;
-  if (Math.abs(Math.sin(a)) > 0.5) { cx = Math.sin(a) > 0 ? -(sw / 2 + 0.5) : sw / 2 + 0.5; cy = 0; }
-  [xcm, ycm] = toScreen(xcm, ycm);
-  xcm += cx; ycm += cy;
-  const k = face.present ? 0.55 : 1;
-  face.x = lerp(face.x, xcm, k); face.y = lerp(face.y, ycm, k); face.cm = lerp(face.cm, dcm, k);
-  face.present = true; face.lastSeen = now;
-  if (!wasPresent) {
-    setEyeDot();
-    if (now - face.goneAt > 4000) humanNoticesFace();
-  }
-  if (dcm < 17 && now - face.closeT > 7000) { face.closeT = now; humanTooClose(); }
-}
-function mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
-
-function humanNoticesFace() {
-  const h = human;
-  if (h.state === 'idle' || h.state === 'look' || h.state === 'walk') {
-    setState('wave', 2.2); h.targetFacing = -HALF_PI;
-    say(pick(['¡Hola!', '¡Ah, estás ahí!', '¡Hola, tú!']), 1.6); audio.voice('happy');
-  }
-}
-function humanTooClose() {
-  const h = human;
-  if (h.state === 'sleep' || h.state === 'held') return;
-  say(pick(['¡Uy, qué cerca!', '¡Qué ojos tan grandes!', '¡Hola, ojo!']), 1.8);
-  audio.voice('alarm');
-}
-
-function updateEye(dt) {
-  const base = 32 / CM_PER_UNIT;
-  let tx, ty, tz;
-  if (face.enabled && face.present) {
-    tx = (face.x / CM_PER_UNIT) * depthK;
-    ty = (face.y / CM_PER_UNIT) * depthK;
-    tz = (face.cm / CM_PER_UNIT) / Math.sqrt(depthK);
-  } else {
-    // Sin cara: la perspectiva sigue la inclinación (como mirar por una ventana que giras)
-    tx = clamp(-tiltRaw.x * base * 0.3 * depthK, -0.7 * W, 0.7 * W);
-    ty = clamp(-tiltRaw.y * base * 0.3 * depthK, -0.7 * H, 0.7 * H);
-    if (!sensor.has && mouse.active) { tx = mouse.x * W * 0.35 * depthK; ty = mouse.y * H * 0.2 * depthK; }
-    tz = base / Math.sqrt(depthK);
-  }
-  tz = clamp(tz, 1.4, 20);
-  const l = face.present ? 16 : 7;
-  eye.x = damp(eye.x, tx, l, dt);
-  eye.y = damp(eye.y, ty, l, dt);
-  eye.z = damp(eye.z, tz, l, dt);
-}
-
-function updateCamera() {
-  // Proyección off-axis: el rectángulo de la pantalla (z = D) es la ventana
-  const ez = eye.z;
-  camera.position.set(eye.x, eye.y, D + ez);
-  camera.rotation.set(0, 0, 0);
-  camera.updateMatrixWorld(true);
-  const n = 0.05, s = n / ez;
-  camera.projectionMatrix.makePerspective((-W / 2 - eye.x) * s, (W / 2 - eye.x) * s, (H / 2 - eye.y) * s, (-H / 2 - eye.y) * s, n, 60);
-  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
-}
-
-/* =====================================================================
- *  Física de muebles
+ *  Física de muebles y efectos de los objetos
  * ===================================================================== */
 function stepFurniture(dt) {
   for (const f of furn) { f.px = f.x; f.py = f.y; }
@@ -828,39 +1776,31 @@ function stepFurniture(dt) {
     for (let i = 0; i < furn.length; i++) for (let j = i + 1; j < furn.length; j++) collideFurn(furn[i], furn[j]);
   }
   for (const f of furn) wallsFurn(f, false);
-  for (const f of furn) {
-    f.dx = f.x - f.px; f.dy = f.y - f.py;
-    f.thudT -= dt;
-    f.visRot = damp(f.visRot, f.rot, 12, dt);
-    f.wob = Math.max(0, f.wob - dt * 3);
-    const sp = Math.hypot(f.vx, f.vy);
-    const jig = (sp > 0.05 && !f.drag ? Math.sin(performance.now() * 0.04 + f.mass) * 0.012 * Math.min(1, sp) : 0) + Math.sin(performance.now() * 0.03) * 0.03 * f.wob;
-    f.g.position.set(f.x, f.y, 0);
-    f.g.rotation.z = f.visRot + jig;
-  }
-  if (lamp) {
-    const L = lamp.g.userData;
-    L.light.intensity = damp(L.light.intensity, lamp.on ? 0.22 : 0, 10, dt);
-    L.shadeMat.emissiveIntensity = damp(L.shadeMat.emissiveIntensity, lamp.on ? 1.1 : 0, 10, dt);
-  }
+  for (const f of furn) { f.dx = f.x - f.px; f.dy = f.y - f.py; f.thudT -= dt; }
 }
 
 function wallsFurn(f, sound) {
-  const lx = W / 2 - f.hx, ly = H / 2 - f.hy;
+  const lx = W / 2 - f.hx, ly = H / 2 - f.hy, e = f.def.bounce || 0.15;
   let impact = 0;
-  if (f.x < -lx) { f.x = -lx; if (f.vx < 0) { impact = -f.vx; f.vx = -f.vx * 0.15; } f.pinX = -1; }
-  if (f.x > lx) { f.x = lx; if (f.vx > 0) { impact = f.vx; f.vx = -f.vx * 0.15; } f.pinX = 1; }
-  if (f.y < -ly) { f.y = -ly; if (f.vy < 0) { impact = Math.max(impact, -f.vy); f.vy = -f.vy * 0.15; } f.pinY = -1; }
-  if (f.y > ly) { f.y = ly; if (f.vy > 0) { impact = Math.max(impact, f.vy); f.vy = -f.vy * 0.15; } f.pinY = 1; }
-  if (sound && impact > 0.25 && f.thudT <= 0) { audio.thud(Math.min(0.6, impact * 0.35) * Math.sqrt(f.mass / 3)); f.thudT = 0.25; f.wob = 1; }
+  if (f.x < -lx) { f.x = -lx; if (f.vx < 0) { impact = -f.vx; f.vx = -f.vx * e; } f.pinX = -1; }
+  if (f.x > lx) { f.x = lx; if (f.vx > 0) { impact = f.vx; f.vx = -f.vx * e; } f.pinX = 1; }
+  if (f.y < -ly) { f.y = -ly; if (f.vy < 0) { impact = Math.max(impact, -f.vy); f.vy = -f.vy * e; } f.pinY = -1; }
+  if (f.y > ly) { f.y = ly; if (f.vy > 0) { impact = Math.max(impact, f.vy); f.vy = -f.vy * e; } f.pinY = 1; }
+  if (sound && impact > 0.25 && f.thudT <= 0) {
+    if (f.def.round) audio.kick(); else audio.thud(Math.min(0.6, impact * 0.35) * Math.sqrt(f.mass / 3));
+    f.thudT = 0.2; f.wob = 1;
+  }
 }
 
 function collideFurn(a, b) {
   const ox = a.hx + b.hx - Math.abs(a.x - b.x), oy = a.hy + b.hy - Math.abs(a.y - b.y);
   if (ox <= 0 || oy <= 0) return;
+  // La ducha es un plato en el suelo: solo la pelota rebota en ella
+  if ((a.type === 'shower' || b.type === 'shower') && !a.def.round && !b.def.round && !a.drag && !b.drag) {
+    if (Math.hypot(a.vx, a.vy) < 0.01 && Math.hypot(b.vx, b.vy) < 0.01) return;
+  }
   let nx = 0, ny = 0, pen;
   if (ox < oy) { nx = Math.sign(b.x - a.x) || 1; pen = ox; } else { ny = Math.sign(b.y - a.y) || 1; pen = oy; }
-  // Masa inversa; bloqueado contra una pared en la dirección del empuje => masa infinita
   let ia = a.drag ? 0 : 1 / a.mass, ib = b.drag ? 0 : 1 / b.mass;
   if ((nx && a.pinX === -nx) || (ny && a.pinY === -ny)) ia = 0;
   if ((nx && b.pinX === nx) || (ny && b.pinY === ny)) ib = 0;
@@ -870,412 +1810,255 @@ function collideFurn(a, b) {
   b.x += nx * pen * ib / sum; b.y += ny * pen * ib / sum;
   const rv = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
   if (rv < 0) {
-    const j = (-rv * 1.1) / sum;
+    const e = Math.max(a.def.bounce || 0.1, b.def.bounce || 0.1);
+    const j = (-rv * (1 + e)) / sum;
     a.vx -= j * ia * nx; a.vy -= j * ia * ny;
     b.vx += j * ib * nx; b.vy += j * ib * ny;
     if (-rv > 0.3 && a.thudT <= 0) { audio.thud(Math.min(0.5, -rv * 0.25)); a.thudT = 0.25; a.wob = b.wob = 0.8; }
   }
 }
 
-/* =====================================================================
- *  Física y comportamiento del humano
- * ===================================================================== */
-const grab = { active: false, x: 0, y: 0, vx: 0, vy: 0, id: null };
-const finger = { follow: false, x: 0, y: 0 };
-const liftZ = () => Math.min(D - HUMAN_H - 0.04, 0.45);
-
-function friction(h, decel, dt) {
-  const sp = Math.hypot(h.vx, h.vy);
-  if (sp < 1e-4) return;
-  const ns = Math.max(0, sp - decel * dt);
-  h.vx *= ns / sp; h.vy *= ns / sp;
-}
-
-function collideHumanFurn(px, py) {
-  const h = human;
-  let impact = 0;
+const TV_COLORS = ['#6fb7ff', '#ffd36f', '#ff7f9f', '#8fff9f', '#ffffff', '#b58fff'];
+const tmpAxis = new THREE.Vector3();
+function updateFurnVisuals(dt, t) {
+  const music = agents.some((a) => a.act && a.act.def.music);
   for (const f of furn) {
-    const cx = clamp(h.x, f.x - f.hx, f.x + f.hx), cy = clamp(h.y, f.y - f.hy, f.y + f.hy);
-    let dx = h.x - cx, dy = h.y - cy;
-    const d2 = dx * dx + dy * dy;
-    if (d2 > H_R * H_R) continue;
-    // altura del mueble en el punto de contacto (ligeramente hacia dentro)
-    const [lx, ly] = toLocal(f, cx, cy);
-    const top = f.support(clamp(lx, -f.lhx + 0.004, f.lhx - 0.004), clamp(ly, -f.lhy + 0.004, f.lhy - 0.004));
-    if (h.z >= top - 0.03) continue;
-    if (d2 > 1e-10) {
-      const d = Math.sqrt(d2), nx = dx / d, ny = dy / d, push = H_R - d;
-      h.x += nx * push; h.y += ny * push;
-      const vn = (h.vx - f.vx) * nx + (h.vy - f.vy) * ny;
-      if (vn < 0) { impact = Math.max(impact, -vn); h.vx -= 1.35 * vn * nx; h.vy -= 1.35 * vn * ny; }
-    } else if (h.z > 0.02) {
-      h.x = px; h.y = py; // encima de un mueble, chocando con una parte más alta (respaldo…)
-    } else {
-      // El mueble se ha deslizado encima: sacarlo por el lado más corto
-      const ex = f.hx + H_R - Math.abs(h.x - f.x), ey = f.hy + H_R - Math.abs(h.y - f.y);
-      if (ex < ey) h.x += (Math.sign(h.x - f.x) || 1) * ex; else h.y += (Math.sign(h.y - f.y) || 1) * ey;
+    f.visRot = damp(f.visRot, f.rot, 12, dt);
+    f.wob = Math.max(0, f.wob - dt * 3);
+    f.spawn = Math.max(0, f.spawn - dt * 2.5);
+    const sp = Math.hypot(f.vx, f.vy);
+    const jig = (sp > 0.05 && !f.drag && !f.def.round ? Math.sin(t * 40 + f.mass) * 0.012 * Math.min(1, sp) : 0) + Math.sin(t * 30) * 0.03 * f.wob;
+    f.g.position.set(f.x, f.y, f.spawn * 0.15);
+    f.g.rotation.z = f.visRot + jig;
+    let sc = 1 - f.spawn * 0.6;
+    f.g.scale.set(sc, sc, sc);
+    const u = f.g.userData;
+    if (u.spin && sp > 0.001) {
+      tmpAxis.set(-f.vy, f.vx, 0).normalize();
+      u.spin.rotateOnWorldAxis(tmpAxis, (sp * dt) / 0.022);
     }
-  }
-  return impact;
-}
-
-function wallsHuman() {
-  const h = human, lx = W / 2 - H_R, ly = H / 2 - H_R;
-  let impact = 0;
-  if (h.x < -lx) { h.x = -lx; if (h.vx < 0) { impact = -h.vx; h.vx = -h.vx * 0.35; } }
-  if (h.x > lx) { h.x = lx; if (h.vx > 0) { impact = h.vx; h.vx = -h.vx * 0.35; } }
-  if (h.y < -ly) { h.y = -ly; if (h.vy < 0) { impact = Math.max(impact, -h.vy); h.vy = -h.vy * 0.35; } }
-  if (h.y > ly) { h.y = ly; if (h.vy > 0) { impact = Math.max(impact, h.vy); h.vy = -h.vy * 0.35; } }
-  return impact;
-}
-
-function stepHuman(dt) {
-  const h = human;
-  h.st += dt;
-  h.pokes = Math.max(0, h.pokes - dt * 0.35);
-  h.spin *= Math.exp(-dt * 2.5);
-  const tm = tilt.length();
-
-  if (h.state === 'held') {
-    const nx = damp(h.x, grab.x, 22, dt), ny = damp(h.y, grab.y, 22, dt);
-    grab.vx = damp(grab.vx, (nx - h.x) / dt, 14, dt);
-    grab.vy = damp(grab.vy, (ny - h.y) / dt, 14, dt);
-    h.x = clamp(nx, -W / 2 + H_R, W / 2 - H_R); h.y = clamp(ny, -H / 2 + H_R, H / 2 - H_R);
-    h.z = damp(h.z, liftZ(), 9, dt);
-    h.vx = h.vy = h.vz = 0;
-    h.targetFacing = -HALF_PI;
-    turn(dt, 5);
-    return;
-  }
-
-  if (h.state === 'sit' || h.state === 'sleep') {
-    const s = h.seat, f = s.f;
-    const [wx, wy] = toWorld(f, s.lx, s.ly);
-    h.x = wx; h.y = wy; h.z = s.h; h.vx = f.vx; h.vy = f.vy;
-    h.facing = h.targetFacing = f.rot + s.face;
-    if (Math.hypot(f.vx, f.vy) > 0.45 || tm > 0.5) {
-      standUpFromSeat();
-      h.vx = f.vx * 1.2 + tilt.x * 0.6; h.vy = f.vy * 1.2 + tilt.y * 0.6;
-      h.thrown = true;
-      say(pick(['¡Uoooh!', '¡Eh!', '¡Mi sofá!']), 1.2); audio.voice('alarm');
-    } else if (h.st > h.dur) {
-      standUpFromSeat();
-    } else if (h.state === 'sleep' && h.st % 2.6 < dt) {
-      say('z Z z', 1.6);
+    if (u.light) {
+      u.light.intensity = damp(u.light.intensity, f.on ? 0.25 : 0, 10, dt);
+      u.shadeMat.emissiveIntensity = damp(u.shadeMat.emissiveIntensity, f.on ? 1.1 : 0, 10, dt);
     }
-    return;
-  }
-
-  if (h.on && furn.includes(h.on)) { h.x += h.on.dx; h.y += h.on.dy; }
-  let sup = groundAt(h.x, h.y);
-  const grounded = h.z <= sup.z + 0.004 && h.vz <= 0.01;
-
-  if (grounded) {
-    h.z = sup.z; h.vz = 0; h.on = sup.f;
-    if (h.state === 'air') setState(h.thrown ? 'dizzy' : 'idle', h.thrown ? 1.6 : 0.6);
-    if (UPRIGHT.has(h.state) && tm > 0.24) {
-      setState('stumble');
-      say(pick(['¡Uoh!', '¡Eh, eh!', '¡Cuidado!', '¡Que me caigo!']), 1.2); audio.voice('alarm');
+    if (u.screen) {
+      const c = u.screen.color;
+      if (f.use === 'tv') { if (Math.random() < dt * 5) c.set(pick(TV_COLORS)); }
+      else if (f.use === 'game') c.setHSL((t * 0.7) % 1, 0.8, 0.55);
+      else if (f.use === 'work') c.set(Math.sin(t * 6) > 0 ? '#3d78c7' : '#4a86d6');
+      else c.set('#1d2a2a');
     }
-    if (h.state === 'stumble') {
-      if (tm > 0.46 || Math.hypot(h.vx, h.vy) > 0.65) fall(pick(['¡Aaah!', '¡Uaaa!', '¡Socorro!']), false);
-      else if (tm < 0.14 && h.st > 0.5) setState('idle', rand(0.5, 1));
-    }
-    const slide = h.state === 'stumble' || h.state === 'fallen' || h.state === 'getup';
-    if (slide) {
-      h.vx += tilt.x * G * dt; h.vy += tilt.y * G * dt;
-      friction(h, (h.state === 'stumble' ? 0.08 : 0.13) * G, dt);
-      if (h.state === 'stumble') {
-        h.targetFacing = Math.atan2(-tilt.y, -tilt.x);
-        h.walkPhase += dt * 16;
-        h.vx -= tilt.x * 0.25 * dt; h.vy -= tilt.y * 0.25 * dt;
-      }
-    } else {
-      let dx = 0, dy = 0;
-      if (h.state === 'walk' && h.target) {
-        const t = h.target, ex = t.x - h.x, ey = t.y - h.y, d = Math.hypot(ex, ey);
-        if (d < 0.012) {
-          const done = t.done;
-          setState('idle', rand(0.8, 2));
-          if (done) done();
-        } else {
-          let ang = Math.atan2(ey, ex);
-          if (h.avoid > 0) { ang += h.avoidSign * 1.15; h.avoid -= dt; }
-          const sp = (t.fast ? 0.34 : 0.2) * Math.min(1, d / 0.05 + 0.35);
-          dx = Math.cos(ang) * sp; dy = Math.sin(ang) * sp;
-          h.targetFacing = ang;
-          h.walkPhase += dt * sp * 60;
-          h.stuckT += dt;
-          if (h.stuckT > 0.45) {
-            const moved = Math.hypot(h.x - h.lastPos.x, h.y - h.lastPos.y);
-            if (moved < sp * h.stuckT * 0.3) { h.avoid = 0.55; h.avoidSign = Math.random() < 0.5 ? -1 : 1; }
-            h.lastPos.x = h.x; h.lastPos.y = h.y; h.stuckT = 0;
-          }
-          if (h.st > t.timeout) setState('idle', 1);
-        }
-      }
-      h.vx = damp(h.vx, dx + tilt.x * 0.25, 12, dt);
-      h.vy = damp(h.vy, dy + tilt.y * 0.25, 12, dt);
-    }
-  } else {
-    h.vz -= GZ * dt; h.on = null;
-    if (h.state !== 'air' && h.state !== 'fallen' && h.state !== 'help' && h.z - sup.z > 0.04) setState('air');
+    if (u.fish) u.fish.forEach((m, i) => { m.position.x = Math.sin(t * (0.6 + i * 0.3) + i * 2) * 0.04; m.position.y = Math.cos(t * 0.5 + i) * 0.012; m.rotation.z = Math.cos(t * (0.6 + i * 0.3) + i * 2) > 0 ? 0 : Math.PI; });
+    if (f.type === 'stereo') { const b = music ? 1 + Math.abs(Math.sin(t * 11)) * 0.08 : 1; f.g.scale.set(sc * b, sc * b, sc * b); }
   }
-
-  const px = h.x, py = h.y;
-  h.x += h.vx * dt; h.y += h.vy * dt; h.z += h.vz * dt;
-  let impact = collideHumanFurn(px, py);
-  impact = Math.max(impact, wallsHuman());
-
-  // ¡Choca con el cristal (tu pantalla)!
-  if (h.z + HUMAN_H > D && h.vz > 0) {
-    h.z = D - HUMAN_H; h.vz = -h.vz * 0.25;
-    audio.bonk(); shakeScreen();
-    say(pick(['¡Ay! ¡El cristal!', '¡Bonk!', '¡Mi cabeza!']), 1.4);
-  }
-
-  sup = groundAt(h.x, h.y);
-  if (h.z < sup.z) {
-    const fallSpeed = -h.vz;
-    h.z = sup.z; h.vz = 0; h.on = sup.f;
-    if (h.state === 'air' || h.state === 'help') {
-      if (fallSpeed > 1.6 || (h.thrown && fallSpeed > 1.15)) { fall('¡Ay!'); audio.thud(0.35); }
-      else if (h.state === 'air') { setState(h.thrown ? 'dizzy' : 'idle', h.thrown ? 1.6 : 0.7); audio.thud(0.1); }
-      h.thrown = false;
-    } else if (h.state === 'fallen' && fallSpeed > 0.5) audio.thud(0.15);
-  }
-
-  if (impact > 0.75 && (h.state === 'air' || h.state === 'stumble' || h.state === 'fallen')) {
-    audio.thud(Math.min(0.5, impact * 0.3));
-    if (h.state !== 'fallen') fall(pick(['¡Ay!', '¡Uf!', '¡Auch!']));
-    else if (impact > 1) say(pick(['¡Ay!', '¡Auch!']), 0.9);
-  }
-
-  behave(dt, tm);
-  turn(dt, h.state === 'walk' ? 9 : 6);
-}
-
-function turn(dt, rate) {
-  const h = human;
-  h.facing += clamp(wrap(h.targetFacing - h.facing), -rate * dt, rate * dt) + h.spin * dt;
-  if (Math.abs(h.spin) > 0.5) h.targetFacing = h.facing;
-}
-
-function behave(dt, tm) {
-  const h = human;
-  switch (h.state) {
-    case 'idle': case 'look':
-      if (h.nextWalk) { const p = h.nextWalk; h.nextWalk = null; walkTo(p.x, p.y, () => setState('idle', 1.5), { fast: true }); break; }
-      if (finger.follow) { followFinger(); break; }
-      if (h.st > h.dur) think();
-      break;
-    case 'wave':
-      if (h.st > h.dur) setState('idle', rand(1, 2));
-      break;
-    case 'help':
-      if (h.z <= groundAt(h.x, h.y).z + 0.002 && h.vz <= 0 && h.st < h.dur - 0.5 && (h.st % 0.75) < dt * 1.5) h.vz = 0.75;
-      if (h.st > h.dur && h.vz === 0) setState('idle', rand(1, 2));
-      break;
-    case 'door':
-      if (h.flag === 0 && h.st > 1.2) { h.flag = 1; say(pick(['Cerrada…', 'No se abre…', 'Clic, clic… nada']), 1.6); audio.voice('sad'); }
-      if (h.flag === 1 && h.st > 2.6) { h.flag = 2; h.targetFacing = -HALF_PI; if (face.present) say('¿Me ayudas?', 1.4); }
-      if (h.st > h.dur) setState('idle', rand(0.5, 1.5));
-      break;
-    case 'lamp':
-      if (!h.lampDone && h.st > 0.5) { h.lampDone = true; if (lamp && Math.hypot(lamp.x - h.x, lamp.y - h.y) < 0.13) setLamp(!lamp.on); }
-      if (h.st > h.dur) setState('idle', rand(0.8, 1.6));
-      break;
-    case 'reach':
-      if (!finger.follow) { setState('idle', 1); say('♥', 1); break; }
-      h.targetFacing = Math.atan2(finger.y - h.y, finger.x - h.x);
-      if (Math.hypot(finger.x - h.x, finger.y - h.y) > 0.09) followFinger();
-      break;
-    case 'dizzy':
-      if (h.st > h.dur) setState('idle', 1);
-      break;
-    case 'fallen': {
-      const sp = Math.hypot(h.vx, h.vy);
-      if (sp < 0.08 && tm < 0.2) h.still += dt; else h.still = 0;
-      if (h.st > 0.6 && h.still > h.fallT) setState('getup');
-      break;
-    }
-    case 'getup':
-      if (h.st > 0.75) {
-        if (h.hard) { setState('dizzy', 1.6); say(pick(['@_@', 'Uff…', 'Todo da vueltas…']), 1.4); }
-        else setState('idle', 0.8);
-      }
-      break;
-  }
-}
-
-function followFinger() {
-  const h = human;
-  const ang = Math.atan2(h.y - finger.y, h.x - finger.x);
-  const x = finger.x + Math.cos(ang) * 0.06, y = finger.y + Math.sin(ang) * 0.06;
-  walkTo(x, y, () => { setState('reach'); say(pick(['♥', '¡Hola, dedo!', '¡Choca!']), 1.2); audio.voice('happy'); }, { fast: true });
-}
-
-/* ---------- Pose y animación ---------- */
-const lookV = new THREE.Vector3();
-function updateHumanVisual(dt, t) {
-  const h = human;
-  const lv = h.state === 'held' ? 30 : 18;
-  h.vis.x = damp(h.vis.x, h.x, lv, dt);
-  h.vis.y = damp(h.vis.y, h.y, lv, dt);
-  h.vis.z = damp(h.vis.z, h.z, lv, dt);
-  h.visFacing += wrap(h.facing - h.visFacing) * Math.min(1, dt * 14);
-
-  const p = standPose();
-  const s = h.state;
-  const breath = Math.sin(t * 2.2) * 0.02;
-  p.torso = breath;
-  const callsYou = s === 'wave' || s === 'help' || s === 'held' || (s === 'door' && h.flag === 2);
-  const lookUser = callsYou || (face.present && (s === 'idle' || s === 'look' || s === 'sit' || s === 'dizzy'));
-
-  if (s === 'walk' || s === 'stumble') {
-    const ph = h.walkPhase, a = s === 'stumble' ? 0.75 : 0.55;
-    p.hipL = Math.sin(ph) * a; p.hipR = -Math.sin(ph) * a;
-    p.kneeL = 0.12 + Math.max(0, -Math.sin(ph + 0.6)) * 0.7;
-    p.kneeR = 0.12 + Math.max(0, Math.sin(ph + 0.6)) * 0.7;
-    p.armL = -p.hipL * 0.8; p.armR = -p.hipR * 0.8;
-    p.pelvisY = 0.104 - Math.abs(Math.cos(ph)) * 0.005;
-    p.torso = -0.08;
-    if (s === 'stumble') { p.raiseL = 1.3 + Math.sin(t * 13) * 0.4; p.raiseR = 1.3 + Math.cos(t * 11) * 0.4; p.torso = Math.sin(t * 9) * 0.15; }
-  } else if (s === 'sit') {
-    p.hipL = p.hipR = -1.5; p.kneeL = 1.45 + Math.sin(t * 3) * 0.12; p.kneeR = 1.45 - Math.sin(t * 3) * 0.12;
-    p.pelvisY = 0.012; p.armL = p.armR = -0.35; p.raiseL = p.raiseR = 0.15;
-  } else if (s === 'sleep') {
-    p.bodyRot = 0; p.lift = 0.03; p.raiseL = p.raiseR = 0.25; p.torso = Math.sin(t * 1.2) * 0.03; p.pitch = 0.2;
-  } else if (s === 'fallen') {
-    p.bodyRot = 0; p.lift = 0.03; p.spread = 0.35; p.raiseL = 1.25 + Math.sin(t * 2) * 0.1; p.raiseR = 1.25; p.hipL = -0.1; p.kneeR = 0.4;
-  } else if (s === 'getup') {
-    p.bodyRot = HALF_PI; p.pelvisY = 0.07; p.hipL = p.hipR = -0.9; p.kneeL = p.kneeR = 1.5; p.torso = 0.5; p.armL = p.armR = -0.6;
-  } else if (s === 'held') {
-    p.spread = 0.15; p.hipL = Math.sin(t * 13) * 0.55; p.hipR = -Math.sin(t * 13) * 0.55; p.kneeL = p.kneeR = 0.35;
-    p.raiseL = 2.5 + Math.sin(t * 15) * 0.35; p.raiseR = 2.5 + Math.cos(t * 14) * 0.35; p.pitch = -0.7;
-  } else if (s === 'air') {
-    p.raiseL = 2.2 + Math.sin(t * 18) * 0.3; p.raiseR = 2.2 + Math.cos(t * 17) * 0.3; p.spread = 0.3; p.hipL = -0.4; p.hipR = 0.2; p.kneeL = p.kneeR = 0.6;
-  } else if (s === 'wave') {
-    p.raiseR = 2.7 + Math.sin(t * 11) * 0.35; p.pitch = -1;
-  } else if (s === 'help') {
-    p.raiseL = 2.6 + Math.sin(t * 12) * 0.35; p.raiseR = 2.6 + Math.sin(t * 12 + 2) * 0.35; p.pitch = -1.1;
-    if (h.vz !== 0) { p.kneeL = p.kneeR = 0.5; p.hipL = p.hipR = -0.3; }
-  } else if (s === 'door') {
-    p.armR = h.flag === 0 ? -1.35 + Math.sin(t * 20) * 0.08 : -0.2; p.raiseR = 0.05;
-    if (h.flag === 1) { p.torso = 0.2; p.pitch = 0.4; }
-  } else if (s === 'lamp') {
-    p.armL = h.st < 0.8 ? -1.3 : -0.2; p.raiseL = 0.1;
-  } else if (s === 'reach') {
-    p.raiseL = p.raiseR = 2.75; p.armL = p.armR = -0.3; p.pitch = -1.2; p.pelvisY = 0.104 + Math.abs(Math.sin(t * 4)) * 0.006;
-  } else if (s === 'dizzy') {
-    p.torso = Math.sin(t * 6) * 0.18; p.raiseL = 0.5; p.raiseR = 0.5; p.yaw = Math.sin(t * 5) * 0.4;
-  }
-
-  // Mirar: a ti (si te detecta), al dedo o a puntos al azar
-  let target = null;
-  if (s === 'reach' || (finger.follow && UPRIGHT.has(s))) target = lookV.set(finger.x, finger.y, D);
-  else if (h.look && t < h.lookT) target = lookV.set(h.look.x, h.look.y, h.look.z);
-  else if (lookUser) target = lookV.set(eye.x, eye.y, D + eye.z);
-  else if ((s === 'idle' || s === 'look') && Math.random() < dt * (s === 'look' ? 0.9 : 0.3)) {
-    h.look = { x: rand(-W / 2, W / 2), y: rand(-H / 2, H / 2), z: rand(0, D * 0.8) };
-    h.lookT = t + rand(0.8, 2);
-  }
-  if (target && s !== 'fallen' && s !== 'sleep' && s !== 'getup') {
-    const hx = h.vis.x, hy = h.vis.y, hz = h.vis.z + 0.25;
-    const dx = target.x - hx, dy = target.y - hy, dz = target.z - hz, hor = Math.hypot(dx, dy);
-    let yaw = hor > 0.02 ? wrap(Math.atan2(dy, dx) - h.visFacing) : 0;
-    if ((s === 'idle' || s === 'look') && Math.abs(yaw) > 1.3) h.targetFacing = Math.atan2(dy, dx);
-    p.yaw = clamp(yaw, -1.3, 1.3) * clamp(hor / (Math.abs(dz) * 0.6 + 0.01), 0.15, 1);
-    p.pitch = clamp(-Math.atan2(dz, hor), -1.25, 0.6);
-  }
-
-  const rate = s === 'fallen' || s === 'getup' || s === 'sleep' ? 9 : 16;
-  for (const k of POSE_KEYS) pose[k] = damp(pose[k], p[k], rate, dt);
-
-  // Inclinación del cuerpo: compensa la inclinación del suelo, o se balancea al colgar del dedo
-  let lx = 0, ly = 0;
-  if (s === 'held') { lx = clamp(grab.vx * 0.35, -0.7, 0.7); ly = clamp(-grab.vy * 0.35, -0.7, 0.7); }
-  else if (UPRIGHT.has(s) || s === 'stumble') { lx = clamp(-tilt.x, -0.5, 0.5) * 0.9; ly = clamp(tilt.y, -0.5, 0.5) * 0.9; }
-  rig.lean.rotation.y = damp(rig.lean.rotation.y, lx, 10, dt);
-  rig.lean.rotation.x = damp(rig.lean.rotation.x, ly, 10, dt);
-
-  rig.root.position.set(h.vis.x, h.vis.y, h.vis.z + pose.lift);
-  rig.heading.rotation.z = h.visFacing + HALF_PI;
-  rig.body.rotation.x = pose.bodyRot;
-  rig.pelvis.position.y = pose.pelvisY;
-  rig.chest.rotation.x = pose.torso;
-  rig.hipL.rotation.set(pose.hipL, 0, pose.spread);
-  rig.hipR.rotation.set(pose.hipR, 0, -pose.spread);
-  rig.kneeL.rotation.x = pose.kneeL;
-  rig.kneeR.rotation.x = pose.kneeR;
-  rig.shL.rotation.set(pose.armL, 0, pose.raiseL);
-  rig.shR.rotation.set(pose.armR, 0, -pose.raiseR);
-  rig.head.rotation.set(pose.pitch, pose.yaw, 0, 'YXZ');
-
-  const dizzy = s === 'dizzy' || (s === 'getup' && h.hard) || (s === 'fallen' && h.hard && h.st > 0.5);
-  rig.stars.visible = dizzy;
-  if (dizzy) rig.stars.rotation.y = t * 5;
+  return music;
 }
 
 /* =====================================================================
- *  Bocadillo, avisos
+ *  Sensores: inclinación y sacudidas
  * ===================================================================== */
-const bubbleEl = $('bubble');
-const bubble = { t: 0 };
-function say(text, dur = 1.5) {
-  bubbleEl.textContent = text;
-  bubble.t = dur;
-  bubbleEl.classList.add('show');
+const sensor = { raw: new THREE.Vector3(0, 0, -1), g0: null, has: false, key: new THREE.Vector2(), keyT: new THREE.Vector2(), shakeT: 0 };
+const tilt = new THREE.Vector2();
+const tiltRaw = new THREE.Vector2();
+const DOWN = new THREE.Vector3(0, 0, -1);
+const tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3();
+
+function screenAngle() {
+  const a = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : (window.orientation || 0);
+  return a * DEG;
 }
-const projV = new THREE.Vector3();
-function updateBubble(dt) {
-  if (bubble.t <= 0) return;
-  bubble.t -= dt;
-  if (bubble.t <= 0) { bubbleEl.classList.remove('show'); return; }
-  const h = human;
-  const lying = h.state === 'fallen' || h.state === 'sleep';
-  projV.set(h.vis.x, h.vis.y, h.vis.z + (lying ? 0.08 : HUMAN_H + 0.03)).project(camera);
-  const x = (projV.x * 0.5 + 0.5) * innerWidth, y = (-projV.y * 0.5 + 0.5) * innerHeight;
-  const bw = bubbleEl.offsetWidth;
-  const cx = clamp(x, bw / 2 + 8, innerWidth - bw / 2 - 8);
-  bubbleEl.style.transform = `translate(${cx - bw / 2}px, ${Math.max(8, y - bubbleEl.offsetHeight - 10)}px)`;
+function toScreen(x, y) {
+  const a = screenAngle(), c = Math.cos(a), s = Math.sin(a);
+  return [x * c - y * s, x * s + y * c];
+}
+function onOrientation(e) {
+  if (e.beta == null || e.gamma == null) return;
+  const b = e.beta * DEG, g = e.gamma * DEG;
+  const gx = Math.sin(g) * Math.cos(b), gy = -Math.sin(b), gz = -Math.cos(g) * Math.cos(b);
+  const [sx, sy] = toScreen(gx, gy);
+  sensor.raw.set(sx, sy, gz).normalize();
+  if (!sensor.has) { sensor.has = true; sensor.g0 = sensor.raw.clone(); }
+}
+function onMotion(e) {
+  const a = e.acceleration;
+  if (!a || a.x == null || !running) return;
+  const now = performance.now();
+  const [ax, ay] = toScreen(a.x, a.y);
+  const m = Math.hypot(ax, ay, a.z || 0);
+  if (m < 9 || now - sensor.shakeT < 140) return;
+  sensor.shakeT = now;
+  const k = 0.018;
+  for (const f of furn) { if (!f.drag) { f.vx -= ax * k / Math.sqrt(f.mass); f.vy -= ay * k / Math.sqrt(f.mass); f.wob = 1; } }
+  for (const h of agents) {
+    if (h.state === 'held') continue;
+    if (h.act) h.endAct(true);
+    h.vx -= ax * k * 1.6; h.vy -= ay * k * 1.6;
+    if (Math.abs(a.z || 0) > 6 && h.state !== 'air') { if (UPRIGHT.has(h.state)) h.setState('air'); h.vz = Math.min(1.2, Math.abs(a.z) * 0.06); }
+    if (m > 15 && h.state !== 'fallen' && h.state !== 'air') h.fall(pick(['¡Terremoto!', '¡Aaah!', '¡Uaaa!']));
+    else if (UPRIGHT.has(h.state)) h.setState('stumble');
+  }
+}
+function updateTilt(dt) {
+  let tx = sensor.key.x, ty = sensor.key.y;
+  if (sensor.has && sensor.g0) {
+    tmpQ.setFromUnitVectors(sensor.g0, DOWN);
+    tmpV.copy(sensor.raw).applyQuaternion(tmpQ);
+    tx = tmpV.x; ty = tmpV.y;
+    if (Math.hypot(tx, ty) < 0.09) sensor.g0.lerp(sensor.raw, Math.min(1, dt * 0.15)).normalize();
+  } else {
+    sensor.key.x = damp(sensor.key.x, sensor.keyT.x, 6, dt);
+    sensor.key.y = damp(sensor.key.y, sensor.keyT.y, 6, dt);
+  }
+  tiltRaw.set(tx, ty);
+  const m = Math.hypot(tx, ty), dz = 0.05, f = m > dz ? (m - dz) / m : 0;
+  tilt.x = damp(tilt.x, tx * f, 12, dt);
+  tilt.y = damp(tilt.y, ty * f, 12, dt);
+}
+function recalibrate() {
+  if (sensor.has) sensor.g0 = sensor.raw.clone();
+  sensor.keyT.set(0, 0);
 }
 
-const tipEl = $('tip');
-let tipTimer = 0;
-function tip(text, ms = 4000) {
-  tipEl.textContent = text;
-  tipEl.classList.remove('hide');
-  clearTimeout(tipTimer);
-  tipTimer = setTimeout(() => tipEl.classList.add('hide'), ms);
+/* =====================================================================
+ *  Seguimiento de ojos (cámara frontal + MediaPipe Face Landmarker)
+ * ===================================================================== */
+const video = $('cam');
+const face = { present: false, x: 0, y: 0, cm: 32, lastSeen: 0, goneAt: 0, enabled: false, loading: false, landmarker: null, stream: null, lastT: -1, lastDetect: 0, closeT: 0 };
+const eye = { x: 0, y: 0, z: 5 };
+let depthK = 1.6;
+const mouse = { x: 0, y: 0, active: false };
+
+async function startFace() {
+  if (face.loading) return;
+  face.loading = true;
+  setEyeDot();
+  try {
+    if (!face.stream) {
+      face.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      video.srcObject = face.stream;
+      await video.play();
+    }
+    if (!face.landmarker) {
+      const { FilesetResolver, FaceLandmarker } = await import(`${MP_BASE}/vision_bundle.mjs`);
+      const fileset = await FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
+      const opts = (delegate) => ({ baseOptions: { modelAssetPath: FACE_MODEL, delegate }, runningMode: 'VIDEO', numFaces: 1 });
+      try { face.landmarker = await FaceLandmarker.createFromOptions(fileset, opts('GPU')); }
+      catch { face.landmarker = await FaceLandmarker.createFromOptions(fileset, opts('CPU')); }
+    }
+    face.enabled = true;
+    tip('Mueve la cabeza: la habitación tiene profundidad. Y tu humano te verá.', 4500);
+  } catch (err) {
+    console.warn(err);
+    face.enabled = false;
+    tip('No se pudo usar la cámara. La perspectiva seguirá la inclinación del móvil.', 4500);
+  }
+  face.loading = false;
+  setEyeDot();
+}
+function stopFace() {
+  face.enabled = false;
+  face.present = false;
+  if (face.stream) { face.stream.getTracks().forEach((t) => t.stop()); face.stream = null; video.srcObject = null; }
+  setEyeDot();
+}
+function setEyeDot() {
+  const cls = 'dot' + (face.loading ? ' load' : face.present ? ' track' : face.enabled ? ' on' : '');
+  for (const id of ['eye-dot', 'eye-dot2']) { const d = $(id); if (d) d.className = cls; }
+  $('btn-eyes').textContent = face.enabled ? 'Seguir ojos: SÍ' : 'Seguir ojos: NO';
 }
 
-function ripple(x, y) {
-  const d = document.createElement('div');
-  d.className = 'ripple';
-  d.style.left = x + 'px'; d.style.top = y + 'px';
-  document.body.appendChild(d);
-  setTimeout(() => d.remove(), 600);
+const FOV_MAX = 66 * DEG;
+function detectFace(now) {
+  if (!face.enabled || !face.landmarker || video.readyState < 2) return;
+  if (now - face.lastDetect < 30 || video.currentTime === face.lastT) return;
+  face.lastDetect = now; face.lastT = video.currentTime;
+  let res;
+  try { res = face.landmarker.detectForVideo(video, now); } catch { return; }
+  const lm = res && res.faceLandmarks && res.faceLandmarks[0];
+  const wasPresent = face.present;
+  if (!lm) {
+    if (face.present && now - face.lastSeen > 500) { face.present = false; face.goneAt = now; setEyeDot(); }
+    return;
+  }
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const L = lm.length >= 478 ? lm[468] : mid(lm[33], lm[133]);
+  const R = lm.length >= 478 ? lm[473] : mid(lm[362], lm[263]);
+  const mx = (L.x + R.x) / 2, my = (L.y + R.y) / 2;
+  const ipdPx = Math.hypot((L.x - R.x) * vw, (L.y - R.y) * vh);
+  const fpx = (Math.max(vw, vh) / 2) / Math.tan(FOV_MAX / 2);
+  const dcm = clamp((6.3 * fpx) / Math.max(ipdPx, 1), 10, 90);
+  let xcm = -(mx - 0.5) * vw * dcm / fpx;
+  let ycm = -(my - 0.5) * vh * dcm / fpx;
+  const sw = innerWidth / PX_PER_CM, sh = innerHeight / PX_PER_CM;
+  const a = screenAngle();
+  let cx = 0, cy = sh / 2 + 0.5;
+  if (Math.abs(Math.sin(a)) > 0.5) { cx = Math.sin(a) > 0 ? -(sw / 2 + 0.5) : sw / 2 + 0.5; cy = 0; }
+  [xcm, ycm] = toScreen(xcm, ycm);
+  xcm += cx; ycm += cy;
+  // Coordenadas relativas al centro de la vista 3D (no al de la pantalla)
+  ycm -= (innerHeight / 2 - (viewRect.top + viewRect.height / 2)) / PX_PER_CM;
+  xcm -= ((viewRect.left + viewRect.width / 2) - innerWidth / 2) / PX_PER_CM;
+  const k = face.present ? 0.55 : 1;
+  face.x = lerp(face.x, xcm, k); face.y = lerp(face.y, ycm, k); face.cm = lerp(face.cm, dcm, k);
+  face.present = true; face.lastSeen = now;
+  if (!wasPresent) {
+    setEyeDot();
+    if (now - face.goneAt > 4000 && host && (host.state === 'idle' || host.state === 'look')) {
+      host.setState('wave', 2.2); host.targetFacing = -HALF_PI;
+      host.say(pick(['¡Hola!', '¡Ah, estás ahí!', '¡Hola, tú!', '¡Te echaba de menos!']), 1.6); host.voice('happy');
+    }
+  }
+  if (dcm < 17 && now - face.closeT > 7000 && host && host.state !== 'held' && !(host.act && host.act.anim === 'lie')) {
+    face.closeT = now;
+    host.say(pick(['¡Uy, qué cerca!', '¡Qué ojos tan grandes!', '¡Hola, ojo!']), 1.8); host.voice('alarm');
+  }
 }
-function shakeScreen() {
-  canvas.classList.remove('shake');
-  void canvas.offsetWidth;
-  canvas.classList.add('shake');
-  if (navigator.vibrate) navigator.vibrate(30);
+
+function updateEye(dt) {
+  const base = 32 / CM_PER_UNIT;
+  let tx, ty, tz;
+  if (face.enabled && face.present) {
+    tx = (face.x / CM_PER_UNIT) * depthK;
+    ty = (face.y / CM_PER_UNIT) * depthK;
+    tz = (face.cm / CM_PER_UNIT) / Math.sqrt(depthK);
+  } else {
+    tx = clamp(-tiltRaw.x * base * 0.3 * depthK, -0.7 * W, 0.7 * W);
+    ty = clamp(-tiltRaw.y * base * 0.3 * depthK, -0.7 * H, 0.7 * H);
+    if (!sensor.has && mouse.active) { tx = mouse.x * W * 0.35 * depthK; ty = mouse.y * H * 0.2 * depthK; }
+    tz = base / Math.sqrt(depthK);
+  }
+  tz = clamp(tz, 1.4, 20);
+  const l = face.present ? 16 : 7;
+  eye.x = damp(eye.x, tx, l, dt);
+  eye.y = damp(eye.y, ty, l, dt);
+  eye.z = damp(eye.z, tz, l, dt);
+}
+
+function updateCamera() {
+  // Proyección off-axis: el rectángulo de la vista (z = D) es la ventana
+  const ez = eye.z;
+  camera.position.set(eye.x, eye.y, D + ez);
+  camera.rotation.set(0, 0, 0);
+  camera.updateMatrixWorld(true);
+  const n = 0.05, s = n / ez;
+  camera.projectionMatrix.makePerspective((-W / 2 - eye.x) * s, (W / 2 - eye.x) * s, (H / 2 - eye.y) * s, (-H / 2 - eye.y) * s, n, 60);
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
 }
 
 /* =====================================================================
  *  Sonido (Web Audio, todo sintetizado)
  * ===================================================================== */
+const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 const audio = {
-  ctx: null, on: true, master: null, noise: null,
+  ctx: null, on: true, master: null, noise: null, mNext: 0, mStep: 0,
   init() {
     if (this.ctx) { if (this.ctx.state !== 'running') this.ctx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     this.ctx = new AC();
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.55;
+    this.master.gain.value = 0.5;
     this.master.connect(this.ctx.destination);
     const len = this.ctx.sampleRate * 0.4;
     this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
@@ -1291,7 +2074,7 @@ const audio = {
     o.frequency.setValueAtTime(f0, t);
     o.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t + dur);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     let node = o;
     if (formant) {
@@ -1302,30 +2085,230 @@ const audio = {
     node.connect(g); g.connect(this.master);
     o.start(t); o.stop(t + dur + 0.02);
   },
-  voice(mood = 'happy') {
-    const base = { happy: 420, alarm: 520, angry: 230, sad: 300 }[mood] || 400;
+  noiseHit(vol, dur, freq, type = 'lowpass', delay = 0) {
+    if (!this.ok()) return;
+    const c = this.ctx, t = c.currentTime + delay;
+    const s = c.createBufferSource(); s.buffer = this.noise;
+    const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+    const g = c.createGain();
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); f.connect(g); g.connect(this.master);
+    s.start(t); s.stop(t + dur + 0.02);
+  },
+  voice(mood = 'happy', pitch = 1) {
+    const base = ({ happy: 420, alarm: 520, angry: 230, sad: 300 }[mood] || 400) * pitch;
     const n = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < n; i++) {
       const f = base * rand(0.85, 1.3);
       const end = mood === 'sad' ? f * 0.7 : mood === 'alarm' ? f * 1.4 : f * rand(0.85, 1.2);
-      this.blip(f, end, 0.075, 'sawtooth', 0.22, i * 0.09, rand(900, 1800));
+      this.blip(f, end, 0.075, 'sawtooth', 0.2, i * 0.09, rand(900, 1800));
     }
   },
-  giggle() { for (let i = 0; i < 4; i++) this.blip(700 + i * 40, 900 + i * 30, 0.05, 'sawtooth', 0.18, i * 0.06, 1500); },
-  thud(vol = 0.3) {
-    if (!this.ok()) return;
-    const c = this.ctx, t = c.currentTime;
-    const s = c.createBufferSource(); s.buffer = this.noise;
-    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 260;
-    const g = c.createGain();
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
-    s.connect(lp); lp.connect(g); g.connect(this.master);
-    s.start(t); s.stop(t + 0.2);
-    this.blip(110, 50, 0.15, 'sine', vol * 0.8);
-  },
+  giggle(pitch = 1) { for (let i = 0; i < 4; i++) this.blip((700 + i * 40) * pitch, (900 + i * 30) * pitch, 0.05, 'sawtooth', 0.16, i * 0.06, 1500); },
+  thud(vol = 0.3) { this.noiseHit(vol, 0.18, 260); this.blip(110, 50, 0.15, 'sine', vol * 0.8); },
   bonk() { this.blip(1400, 700, 0.18, 'sine', 0.25); this.blip(2100, 1500, 0.08, 'triangle', 0.08); },
   click() { this.blip(2400, 1600, 0.025, 'square', 0.05); this.blip(1800, 1200, 0.02, 'square', 0.04, 0.05); },
+  kick() { this.blip(300, 120, 0.08, 'square', 0.08); },
+  flush() { this.noiseHit(0.25, 0.9, 900, 'bandpass'); },
+  cash(gain) {
+    if (gain) { this.blip(1318, 1318, 0.08, 'square', 0.06); this.blip(1760, 1760, 0.18, 'square', 0.06, 0.08); }
+    else { this.blip(880, 660, 0.1, 'square', 0.05); }
+  },
+  dingdong() { this.blip(988, 988, 0.5, 'sine', 0.25); this.blip(784, 784, 0.7, 'sine', 0.25, 0.45); },
+  menu() { this.blip(660, 880, 0.04, 'square', 0.04); },
+  music(on) {
+    if (!this.ok() || !on) { this.mNext = 0; return; }
+    const c = this.ctx;
+    if (!this.mNext || this.mNext < c.currentTime) this.mNext = c.currentTime + 0.05;
+    while (this.mNext < c.currentTime + 0.25) {
+      const step = this.mStep++, t = this.mNext - c.currentTime;
+      const root = [48, 45, 41, 43][Math.floor(step / 16) % 4];
+      if (step % 4 === 0) this.blip(mtof(root), mtof(root), 0.2, 'square', 0.07, t);
+      if (step % 4 === 2) this.blip(mtof(root + 12), mtof(root + 12), 0.1, 'square', 0.04, t);
+      const arp = [0, 4, 7, 12, 16, 12, 7, 4];
+      if (step % 2 === 0) this.blip(mtof(root + 24 + arp[(step / 2) % 8]), mtof(root + 24 + arp[(step / 2) % 8]), 0.09, 'square', 0.03, t);
+      if (step % 8 === 4) this.noiseHit(0.08, 0.06, 4000, 'highpass', t);
+      this.mNext += 0.13;
+    }
+  },
 };
+
+/* =====================================================================
+ *  Interfaz: barra superior, necesidades, menús, tienda, avisos
+ * ===================================================================== */
+let viewRect = { left: 0, top: 0, width: 1, height: 1 };
+const settings = { speed: 1 };
+let born = Date.now(), lastDay = 0;
+
+const needsEl = $('needs');
+const needEls = {};
+for (const k of NEED_KEYS) {
+  const d = document.createElement('div');
+  d.className = 'need';
+  d.innerHTML = `<span class="nl"><i>${NEED_INFO[k].icon}</i>${NEED_INFO[k].label}</span><span class="bar"><b></b></span>`;
+  needsEl.appendChild(d);
+  needEls[k] = { root: d, fill: d.querySelector('b') };
+}
+
+function moodLabel(m) {
+  if (m > 78) return ['☻', 'Feliz'];
+  if (m > 58) return ['☺', 'Bien'];
+  if (m > 38) return ['😐', 'Regular'];
+  if (m > 20) return ['☹', 'Mal'];
+  return ['😫', 'Fatal'];
+}
+
+function updateHUD() {
+  if (!host) return;
+  for (const k of NEED_KEYS) {
+    const v = host.needs[k], e = needEls[k];
+    e.fill.style.width = `${Math.max(2, v)}%`;
+    e.fill.style.background = v > 60 ? '#5fd35f' : v > 30 ? '#e6c84a' : '#e0503e';
+    e.root.classList.toggle('alert', v < 15);
+  }
+  const m = host.mood(), [ic, txt] = moodLabel(m);
+  $('hud-name').textContent = host.name;
+  $('hud-mood').textContent = `${ic} ${txt}`;
+  $('hud-mood').style.color = m > 58 ? '#9ff09f' : m > 38 ? '#f0e08f' : '#ff9f8f';
+  $('hud-money').textContent = `◎ ${Math.floor(money)}`;
+  $('hud-day').textContent = `Día ${Math.floor((Date.now() - born) / 86400000) + 1}`;
+}
+
+let menuFor = null, menuOpenT = 0;
+function openMenu(f, cx, cy) {
+  const el = $('actmenu');
+  el.innerHTML = '';
+  menuFor = f;
+  const h = document.createElement('div');
+  h.className = 'mtitle';
+  h.textContent = `${f.def.icon} ${f.def.name}`;
+  el.appendChild(h);
+  const add = (label, fn, disabled = false, cls = '') => {
+    const b = document.createElement('button');
+    b.textContent = label; b.disabled = disabled; if (cls) b.className = cls;
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (performance.now() - menuOpenT < 450) return; // evita el "clic fantasma" del mismo toque que abrió el menú
+      closeMenu(); audio.menu(); fn();
+    });
+    el.appendChild(b);
+  };
+  for (const def of f.def.actions) {
+    const label = def.cost ? `${def.label} (${def.cost}◎)` : def.label;
+    add(label, () => {
+      if (def.id === 'toggle') { setLamp(f, !f.on); if (host && UPRIGHT.has(host.state)) host.say(f.on ? '¡Luz!' : '¿Quién ha apagado?', 1.2); return; }
+      if (host.perform(f, def, { user: true })) { if (Math.random() < 0.5) host.say(pick(['¡Vale!', 'Voy', '¡Bien!', 'Ahora mismo']), 1); }
+    }, def.cost && money < def.cost);
+  }
+  add('↻ Girar', () => rotateFurn(f), false, 'minor');
+  const refund = Math.round(f.def.price * 0.6);
+  add(`Vender (+${refund}◎)`, () => sellFurn(f), false, 'minor');
+  el.hidden = false;
+  menuOpenT = performance.now();
+  const r = el.getBoundingClientRect();
+  el.style.left = `${clamp(cx - r.width / 2, 6, innerWidth - r.width - 6)}px`;
+  el.style.top = `${clamp(cy + 14, 6, innerHeight - r.height - 6)}px`;
+  audio.menu();
+}
+function closeMenu() { $('actmenu').hidden = true; menuFor = null; }
+
+function rotateFurn(f) {
+  const old = f.rot;
+  if (agents.some((a) => a.act && (a.act.seatF === f || a.act.f === f))) for (const a of agents) if (a.act && (a.act.seatF === f || a.act.f === f)) a.endAct(true);
+  f.rot += HALF_PI;
+  f.mainSeat = null;
+  updateExtents(f);
+  f.x = clamp(f.x, -W / 2 + f.hx, W / 2 - f.hx);
+  f.y = clamp(f.y, -H / 2 + f.hy, H / 2 - f.hy);
+  f.visRot = old;
+  f.wob = 1;
+  audio.blip(260, 380, 0.1, 'triangle', 0.12);
+  save();
+}
+
+function sellFurn(f) {
+  if (ESSENTIAL.has(f.type) && furn.filter((o) => o.type === f.type).length === 1) {
+    if (!confirm(`Si vendes ${f.def.name.toLowerCase()}, ${host.name} lo pasará mal. ¿Seguro?`)) return;
+  }
+  const refund = Math.round(f.def.price * 0.6);
+  removeFurn(f);
+  earn(refund);
+  audio.cash(true);
+  toast(`Vendido: ${f.def.name} (+${refund}◎)`);
+  save();
+}
+
+function buildShop() {
+  const list = $('shop-list');
+  list.innerHTML = '';
+  for (const type of SHOP) {
+    const d = DEFS[type];
+    const item = document.createElement('div');
+    item.className = 'item';
+    const owned = furn.filter((f) => f.type === type).length;
+    item.innerHTML = `<span class="ic">${d.icon}</span><span class="nm">${d.name}${owned ? ` <small>×${owned}</small>` : ''}<small class="ds">${shopDesc(d)}</small></span>`;
+    const b = document.createElement('button');
+    b.textContent = `${d.price}◎`;
+    b.disabled = money < d.price;
+    b.addEventListener('click', () => buy(type));
+    item.appendChild(b);
+    list.appendChild(item);
+  }
+  $('shop-money').textContent = `◎ ${Math.floor(money)}`;
+}
+function shopDesc(d) {
+  const tags = new Set();
+  for (const a of d.actions) for (const k in a.adv || {}) tags.add(k === 'money' ? 'Dinero' : NEED_INFO[k].label);
+  return tags.size ? [...tags].join(' · ') : 'Decoración';
+}
+function buy(type) {
+  const d = DEFS[type];
+  if (money < d.price) return;
+  const spot = findSpotFor(type);
+  if (!spot) { toast('No cabe. Vende algo o mueve los muebles.'); audio.blip(200, 150, 0.2, 'square', 0.06); return; }
+  money -= d.price;
+  const f = addFurn(type, spot.x, spot.y, spot.rot || 0);
+  f.spawn = 1;
+  audio.cash(true);
+  $('shop').hidden = true;
+  toast(`${d.icon} ${d.name} comprado. Arrástralo donde quieras.`);
+  if (host && UPRIGHT.has(host.state)) {
+    host.say(pick(['¡Oooh! ¡Algo nuevo!', '¡Qué bonito!', '¡Gracias!', '¡Me encanta!']), 1.6); host.voice('happy');
+    host.addNeed('fun', 8);
+    host.look = { x: f.x, y: f.y, z: 0.1 }; host.lookT = clock + 2;
+  }
+  save();
+}
+
+const toastEl = $('toast');
+let toastTimer = 0;
+function toast(text, ms = 3200) {
+  toastEl.textContent = text;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms);
+}
+const tipEl = $('tip');
+let tipTimer = 0;
+function tip(text, ms = 4000) {
+  tipEl.textContent = text;
+  tipEl.classList.remove('hide');
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(() => tipEl.classList.add('hide'), ms);
+}
+function ripple(x, y) {
+  const d = document.createElement('div');
+  d.className = 'ripple';
+  d.style.left = x + 'px'; d.style.top = y + 'px';
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 600);
+}
+function shakeScreen() {
+  canvas.classList.remove('shake');
+  void canvas.offsetWidth;
+  canvas.classList.add('shake');
+  if (navigator.vibrate) navigator.vibrate(30);
+}
 
 /* =====================================================================
  *  Interacción con el dedo
@@ -1335,10 +2318,9 @@ const ndc = new THREE.Vector2();
 const floorPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const hitV = new THREE.Vector3(), segA = new THREE.Vector3(), segB = new THREE.Vector3();
 const pointers = new Map();
-let lastFurnTap = { f: null, t: 0 };
 
 function rayAt(cx, cy) {
-  ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
+  ndc.set(((cx - viewRect.left) / viewRect.width) * 2 - 1, -((cy - viewRect.top) / viewRect.height) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
   return raycaster.ray;
 }
@@ -1346,33 +2328,43 @@ function planeHit(ray, z) {
   floorPlane.constant = -z;
   return ray.intersectPlane(floorPlane, hitV) ? { x: hitV.x, y: hitV.y } : null;
 }
-function hitsHuman(ray) {
-  rig.root.getWorldPosition(segA);
-  rig.head.getWorldPosition(segB);
-  segB.lerp(segA, -0.25); // un poco por encima de la cabeza
-  return ray.distanceSqToSegment(segA, segB) < 0.07 * 0.07;
+function hitAgent(ray) {
+  let best = null, bd = 0.07 * 0.07;
+  for (const a of agents) {
+    if (a.gone) continue;
+    a.rig.root.getWorldPosition(segA);
+    a.rig.head.getWorldPosition(segB);
+    segB.lerp(segA, -0.25);
+    const d = ray.distanceSqToSegment(segA, segB);
+    if (d < bd) { bd = d; best = a; }
+  }
+  return best;
 }
-function hitsFurn() {
+function hitFurn() {
   const hits = raycaster.intersectObjects(furn.map((f) => f.g), true);
   return hits.length ? hits[0].object.userData.furn : null;
 }
 
 function onDown(e) {
   audio.init();
+  if (!running) return;
+  closeMenu();
   canvas.setPointerCapture(e.pointerId);
   const ray = rayAt(e.clientX, e.clientY);
   const p = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, t0: performance.now(), moved: false, kind: 'floor' };
-  if (!grab.active && hitsHuman(ray)) {
-    p.kind = 'human';
-  } else {
-    const f = hitsFurn();
+  const floorPt = planeHit(ray, 0);
+  const puddle = floorPt && puddles.find((q) => Math.hypot(q.x - floorPt.x, q.y - floorPt.y) < 0.06);
+  const ag = !grab.agent && hitAgent(ray);
+  if (ag) { p.kind = 'agent'; p.agent = ag; }
+  else if (puddle) { p.kind = 'puddle'; p.puddle = puddle; }
+  else {
+    const f = hitFurn();
     if (f) {
       p.kind = 'furn'; p.f = f;
-      const pt = planeHit(ray, 0) || { x: f.x, y: f.y };
+      const pt = floorPt || { x: f.x, y: f.y };
       p.ox = f.x - pt.x; p.oy = f.y - pt.y;
     } else {
-      const pt = planeHit(ray, 0);
-      if (pt) { p.pt = pt; human.look = { x: pt.x, y: pt.y, z: D }; human.lookT = clock + 1.2; }
+      if (floorPt) { p.pt = floorPt; if (host) { host.look = { x: floorPt.x, y: floorPt.y, z: D }; host.lookT = clock + 1.2; } }
       ripple(e.clientX, e.clientY);
     }
   }
@@ -1382,21 +2374,21 @@ function onDown(e) {
 function onMove(e) {
   if (e.pointerType === 'mouse' && !pointers.size) {
     mouse.active = true;
-    mouse.x = (e.clientX / innerWidth) * 2 - 1;
-    mouse.y = -((e.clientY / innerHeight) * 2 - 1);
+    mouse.x = ((e.clientX - viewRect.left) / viewRect.width) * 2 - 1;
+    mouse.y = -(((e.clientY - viewRect.top) / viewRect.height) * 2 - 1);
   }
   const p = pointers.get(e.pointerId);
   if (!p) return;
   p.x = e.clientX; p.y = e.clientY;
   if (!p.moved && Math.hypot(p.x - p.x0, p.y - p.y0) > 9) p.moved = true;
   const ray = rayAt(p.x, p.y);
-  if (p.kind === 'human') {
-    if (p.moved && !grab.active) startGrab(p);
-    if (grab.active && grab.id === p.id) { const pt = planeHit(ray, liftZ()); if (pt) { grab.x = pt.x; grab.y = pt.y; } }
+  if (p.kind === 'agent') {
+    if (p.moved && !grab.agent) startGrab(p);
+    if (grab.agent && grab.id === p.id) { const pt = planeHit(ray, liftZ()); if (pt) { grab.x = pt.x; grab.y = pt.y; } }
   } else if (p.kind === 'furn' && p.moved) {
     const pt = planeHit(ray, 0);
     if (pt) {
-      if (!p.f.drag && human.on !== p.f && (human.state === 'idle' || human.state === 'look')) { human.look = { x: p.f.x, y: p.f.y, z: 0.1 }; human.lookT = clock + 1.5; }
+      if (!p.f.drag) for (const a of agents) if (a.act && (a.act.f === p.f || a.act.seatF === p.f) && a.act.anim === 'stand') a.endAct(true);
       p.f.drag = { x: pt.x + p.ox, y: pt.y + p.oy };
     }
   } else if (p.kind === 'floor') {
@@ -1406,15 +2398,16 @@ function onMove(e) {
 }
 
 function startGrab(p) {
-  const h = human;
-  if (h.state === 'sit' || h.state === 'sleep') h.seat = null;
-  setState('held');
-  grab.active = true; grab.id = p.id; grab.vx = grab.vy = 0;
-  grab.x = h.x; grab.y = h.y;
+  const a = p.agent;
+  if (a.act) a.endAct(true);
+  a.setState('held');
+  a.holding = null;
+  grab.agent = a; grab.id = p.id; grab.vx = grab.vy = 0;
+  grab.x = a.x; grab.y = a.y;
   const pt = planeHit(rayAt(p.x, p.y), liftZ());
   if (pt) { grab.x = pt.x; grab.y = pt.y; }
-  say(pick(['¡Eh!', '¡Bájame!', '¡Uaaa!', '¡Qué alto!']), 1.3);
-  audio.voice('alarm');
+  a.say(pick(['¡Eh!', '¡Bájame!', '¡Uaaa!', '¡Qué alto!']), 1.3);
+  a.voice('alarm');
 }
 
 function onUp(e) {
@@ -1422,56 +2415,45 @@ function onUp(e) {
   if (!p) return;
   pointers.delete(e.pointerId);
   const dur = performance.now() - p.t0;
-  const h = human;
-  if (p.kind === 'human') {
-    if (grab.active && grab.id === p.id) {
-      grab.active = false;
-      setState('air');
-      h.vx = clamp(grab.vx, -3, 3); h.vy = clamp(grab.vy, -3, 3); h.vz = 0.25;
-      const sp = Math.hypot(h.vx, h.vy);
-      h.thrown = sp > 0.6;
-      h.spin = clamp(sp * 5, 0, 18) * (Math.random() < 0.5 ? -1 : 1);
-      if (sp > 1.2) say(pick(['¡Wiiiii!', '¡Aaaaah!', '¡Vuelooo!']), 1.2);
-    } else if (!p.moved) poke();
+  if (p.kind === 'agent') {
+    const a = p.agent;
+    if (grab.agent === a && grab.id === p.id) {
+      grab.agent = null;
+      a.setState('air');
+      a.vx = clamp(grab.vx, -3, 3); a.vy = clamp(grab.vy, -3, 3); a.vz = 0.25;
+      const sp = Math.hypot(a.vx, a.vy);
+      a.thrown = sp > 0.6;
+      a.spin = clamp(sp * 5, 0, 18) * (Math.random() < 0.5 ? -1 : 1);
+      if (sp > 1.2) a.say(pick(['¡Wiiiii!', '¡Aaaaah!', '¡Vuelooo!']), 1.2);
+      if (!a.isHost && sp > 1.6) a.angry = true;
+    } else if (!p.moved && agents.includes(a)) a.poke();
+  } else if (p.kind === 'puddle') {
+    if (!p.moved && puddles.includes(p.puddle)) cleanPuddle(p.puddle);
   } else if (p.kind === 'furn') {
     const f = p.f;
-    if (f.drag) { f.drag = null; f.vx *= 0.5; f.vy *= 0.5; }
-    else if (!p.moved && dur < 350) {
-      const now = performance.now();
-      if (f === lamp) { setLamp(!lamp.on); if (UPRIGHT.has(h.state)) say(lamp.on ? '¡Luz!' : '¿Quién ha apagado?', 1.2); }
-      else if (lastFurnTap.f === f && now - lastFurnTap.t < 380) { rotateFurn(f); lastFurnTap.f = null; }
-      else { f.wob = 1; lastFurnTap = { f, t: now }; audio.blip(320, 260, 0.06, 'sine', 0.12); }
-    }
+    if (f.drag) { f.drag = null; f.vx *= 0.5; f.vy *= 0.5; save(); }
+    else if (!p.moved && dur < 400 && furn.includes(f)) openMenu(f, p.x, p.y);
   } else if (p.kind === 'floor') {
-    if (finger.follow && finger.id === p.id) { finger.follow = false; }
-    else if (!p.moved && dur < 350 && p.pt && UPRIGHT.has(h.state) && h.state !== 'held') {
-      walkTo(p.pt.x, p.pt.y, () => setState('idle', rand(1.5, 3)));
-      if (Math.random() < 0.5) say(pick(['¿Allí?', '¡Voy!', 'Vale, vale']), 1);
+    if (finger.follow && finger.id === p.id) finger.follow = false;
+    else if (!p.moved && dur < 350 && p.pt && host && (UPRIGHT.has(host.state) || (host.state === 'act' && !host.act.seat && host.act.def.id !== 'talk'))) {
+      if (host.act) host.endAct(true);
+      host.userCmd = true;
+      host.walkTo(p.pt.x, p.pt.y, () => { host.setState('idle', rand(1.5, 3)); host.userCmd = false; });
+      if (Math.random() < 0.4) host.say(pick(['¿Allí?', '¡Voy!', 'Vale, vale']), 1);
     }
   }
-}
-
-function rotateFurn(f) {
-  const old = f.rot;
-  f.rot += HALF_PI;
-  updateExtents(f);
-  f.x = clamp(f.x, -W / 2 + f.hx, W / 2 - f.hx);
-  f.y = clamp(f.y, -H / 2 + f.hy, H / 2 - f.hy);
-  f.visRot = old;
-  f.wob = 1;
-  audio.blip(260, 380, 0.1, 'triangle', 0.12);
 }
 
 function checkHolds() {
   const now = performance.now();
   for (const p of pointers.values()) {
-    if (p.kind === 'human' && !grab.active && !p.moved && now - p.t0 > 260) startGrab(p);
-    if (p.kind === 'floor' && !p.moved && !finger.follow && p.pt && now - p.t0 > 550) {
+    if (p.kind === 'agent' && !grab.agent && !p.moved && now - p.t0 > 260 && agents.includes(p.agent)) startGrab(p);
+    if (p.kind === 'floor' && !p.moved && !finger.follow && p.pt && now - p.t0 > 550 && host) {
       finger.follow = true; finger.id = p.id; finger.x = p.pt.x; finger.y = p.pt.y;
-      const h = human;
-      if (UPRIGHT.has(h.state) || h.state === 'sit') {
-        if (h.state === 'sit') standUpFromSeat(); else followFinger();
-        say(pick(['¿Qué es eso?', '¡Un dedo!', '¡Ooh!']), 1.2);
+      if (UPRIGHT.has(host.state) || (host.act && !host.userCmd && host.act.def.id !== 'talk' && host.act.anim !== 'lie')) {
+        if (host.act) host.endAct(true);
+        host.followFinger();
+        host.say(pick(['¿Qué es eso?', '¡Un dedo!', '¡Ooh!']), 1.2);
       }
     }
   }
@@ -1482,7 +2464,6 @@ canvas.addEventListener('pointermove', onMove);
 canvas.addEventListener('pointerup', onUp);
 canvas.addEventListener('pointercancel', onUp);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
 window.addEventListener('keydown', (e) => {
   const k = 0.5;
   if (e.key === 'ArrowLeft') sensor.keyT.x = -k;
@@ -1496,26 +2477,106 @@ window.addEventListener('keyup', (e) => {
 });
 
 /* =====================================================================
+ *  Visitas
+ * ===================================================================== */
+const PROFILES = [
+  { name: 'Lola', skin: '#e8b996', shirt: '#d0574e', pants: '#3b3b5c', hair: '#2b1b12', hairStyle: 'long', pitch: 1.25 },
+  { name: 'Pepe', skin: '#c68a62', shirt: '#e3c26a', pants: '#4a3a2a', hair: '#1a1410', hairStyle: 'flat', pitch: 0.8 },
+  { name: 'Nuria', skin: '#f2d6c2', shirt: '#7d3f9b', pants: '#2f2f3a', hair: '#b4532a', hairStyle: 'bun', pitch: 1.2 },
+  { name: 'Iker', skin: '#8a5a3c', shirt: '#4f9a6f', pants: '#2a3a5a', hair: '#141010', hairStyle: 'short', pitch: 0.9 },
+  { name: 'Marta', skin: '#f0c8a8', shirt: '#e98fb0', pants: '#5a6a8a', hair: '#e2c26a', hairStyle: 'long', pitch: 1.15 },
+  { name: 'Bruno', skin: '#5f3b26', shirt: '#e8e2d2', pants: '#3a3a3a', hair: '#141010', hairStyle: 'bald', pitch: 0.72, scale: 1.06 },
+  { name: 'Abuela Rosa', skin: '#efd2bd', shirt: '#7f9fc2', pants: '#6a5a6a', hair: '#e6e2da', hairStyle: 'bun', pitch: 1.05, scale: 0.94 },
+];
+const HOST_PROFILE = { name: 'Nico', skin: '#f2d2b6', shirt: '#3f8f7f', pants: '#2f3d63', hair: '#5a3a22', hairStyle: 'short', pitch: 1 };
+
+const visit = { t: rand(45, 90), pending: null };
+function updateVisits(dt) {
+  if (!host) return;
+  for (const v of visitors()) {
+    if (v.gone) {
+      v.destroy();
+      visit.t = rand(110, 230);
+      if (!v.angry) host.addNeed('social', 6);
+    }
+  }
+  const nearDoor = agents.some((a) => !a.isHost && (a.leaving || !a.arrived) && Math.hypot(a.x - door.x, a.y - H / 2) < 0.2);
+  door.target = nearDoor || (visit.pending && visit.pending.t < 0.8) ? 1.6 : 0;
+  if (visit.pending) {
+    visit.pending.t -= dt;
+    if (visit.pending.t <= 0) { spawnVisitor(visit.pending.profile); visit.pending = null; }
+    return;
+  }
+  if (visitors().length) return;
+  visit.t -= dt;
+  if (visit.t > 0) return;
+  if (host.state === 'held' || (host.act && host.act.anim === 'lie') || (host.act && ['pee', 'shower'].includes(host.act.def.id))) { visit.t = 20; return; }
+  const profile = pick(PROFILES);
+  visit.pending = { t: 2.2, profile };
+  audio.dingdong();
+  host.say('¡Llaman a la puerta!', 1.6);
+  host.look = { x: door.x, y: H / 2, z: 0.15 }; host.lookT = clock + 2;
+  toast(`🔔 ${profile.name} viene de visita`);
+}
+function spawnVisitor(profile) {
+  const v = new Agent(profile, false);
+  v.place(door.x, H / 2 - 0.03);
+  v.facing = v.targetFacing = -HALF_PI;
+  v.leaveAt = clock + rand(55, 95);
+  v.walkTo(door.x + rand(-0.06, 0.06), H / 2 - 0.2, () => {
+    v.arrived = true;
+    v.setState('wave', 1.6);
+    v.say(pick([`¡Hola, ${host.name}!`, '¡Holaaa!', '¿Se puede?', `¡${host.name}! ¡Qué tal!`]), 1.8);
+    v.voice('happy');
+    if (Math.random() < 0.35) { const g = pick([15, 20, 30]); earn(g); audio.cash(true); toast(`🎁 ${profile.name} te ha traído un regalo: +${g}◎`); }
+    if (host.canTalk()) { host.setState('wave', 1.6); host.targetFacing = Math.atan2(v.y - host.y, v.x - host.x); host.say(pick([`¡${profile.name}!`, '¡Una visita!', '¡Hola!']), 1.4); host.voice('happy'); }
+  }, { timeout: 8 });
+}
+
+/* =====================================================================
+ *  Guardar / cargar
+ * ===================================================================== */
+function save() {
+  if (!host || !running) return;
+  const data = {
+    v: 2, name: host.name, money, needs: host.needs, born, lastDay, t: Date.now(), speed: settings.speed, depth: depthK, sound: audio.on,
+    items: furn.map((f) => ({ type: f.type, fx: f.x / (W / 2), fy: f.y / (H / 2), rot: f.rot, on: f.on })),
+  };
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch { /* sin almacenamiento */ }
+}
+function loadSave() {
+  try { const d = JSON.parse(localStorage.getItem(SAVE_KEY)); return d && d.v === 2 ? d : null; } catch { return null; }
+}
+
+/* =====================================================================
  *  Tamaño, bucle principal, arranque
  * ===================================================================== */
-let laidOut = false;
 function resize() {
-  const w = innerWidth, h = innerHeight, s = Math.min(w, h);
-  W = w / s; H = h / s; D = 0.9;
+  const top = $('topbar').offsetHeight, bottom = $('panel').offsetHeight;
+  const cw = innerWidth, ch = Math.max(100, innerHeight - top - bottom);
+  canvas.style.top = `${top}px`;
+  canvas.style.height = `${ch}px`;
+  viewRect = { left: 0, top, width: cw, height: ch };
+  const s = Math.min(cw, ch);
+  const oldW = W, oldH = H;
+  W = cw / s; H = ch / s; D = 0.9;
   CM_PER_UNIT = s / PX_PER_CM;
-  renderer.setSize(w, h, false);
+  const scale = clamp(250 / s, 0.25, 1);
+  const rw = Math.round(cw * scale), rh = Math.round(ch * scale);
+  renderer.setSize(rw, rh, false);
+  if (!rt) rt = new THREE.WebGLRenderTarget(rw, rh, { depthBuffer: true });
+  else rt.setSize(rw, rh);
+  rt.texture.magFilter = rt.texture.minFilter = THREE.NearestFilter;
   buildRoom();
-  if (!laidOut) { layout(); laidOut = true; }
-  for (const f of furn) { f.x = clamp(f.x, -W / 2 + f.hx, W / 2 - f.hx); f.y = clamp(f.y, -H / 2 + f.hy, H / 2 - f.hy); }
-  human.x = clamp(human.x, -W / 2 + H_R, W / 2 - H_R);
-  human.y = clamp(human.y, -H / 2 + H_R, H / 2 - H_R);
+  for (const f of furn) {
+    f.x = clamp((f.x / (oldW / 2)) * (W / 2), -W / 2 + f.hx, W / 2 - f.hx);
+    f.y = clamp((f.y / (oldH / 2)) * (H / 2), -H / 2 + f.hy, H / 2 - f.hy);
+  }
+  for (const a of agents) { a.x = clamp(a.x, -W / 2 + H_R, W / 2 - H_R); a.y = clamp(a.y, -H / 2 + H_R, H / 2 - H_R); }
 }
 window.addEventListener('resize', resize);
-resize();
-human.y = H * 0.27; human.vis.y = human.y;
-eye.z = 32 / CM_PER_UNIT;
 
-let clock = 0, last = performance.now(), running = false;
+let clock = 0, last = performance.now(), running = false, hudT = 0, saveT = 5;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000);
@@ -1525,16 +2586,32 @@ function frame(now) {
   if (running) {
     detectFace(now);
     checkHolds();
-    // dos subpasos de física para más estabilidad
-    for (let i = 0; i < 2; i++) { stepFurniture(dt / 2); stepHuman(dt / 2); }
+    for (let i = 0; i < 2; i++) {
+      stepFurniture(dt / 2);
+      for (const a of agents) a.step(dt / 2);
+      separateAgents();
+    }
+    host.updateNeeds(dt);
+    updateVisits(dt);
+    hudT -= dt;
+    if (hudT <= 0) { hudT = 0.25; updateHUD(); }
+    saveT -= dt;
+    if (saveT <= 0) { saveT = 5; save(); }
   }
+  door.open = damp(door.open, door.target, 5, dt);
+  if (door.hinge) door.hinge.rotation.z = door.open;
   updateEye(dt);
-  updateHumanVisual(dt, clock);
+  for (const a of agents) a.updateVisual(dt, clock);
+  const music = updateFurnVisuals(dt, clock);
+  audio.music(music);
   updateCamera();
+  renderer.setRenderTarget(rt);
   renderer.render(scene, camera);
-  updateBubble(dt);
+  renderer.setRenderTarget(null);
+  post.mat.uniforms.tDiffuse.value = rt.texture;
+  renderer.render(post.scene, post.cam);
+  for (const a of agents) a.updateBubble(dt);
 }
-requestAnimationFrame(frame);
 
 async function requestSensors() {
   try {
@@ -1547,33 +2624,100 @@ async function requestSensors() {
   window.addEventListener('devicemotion', onMotion);
 }
 
+// Escena inicial (se ve detrás de la pantalla de inicio)
+const saved = loadSave();
+resize();
+if (saved && saved.items && saved.items.length) {
+  for (const it of saved.items) {
+    if (!DEFS[it.type]) continue;
+    const f = addFurn(it.type, 0, 0, it.rot || 0);
+    f.x = clamp(it.fx * (W / 2), -W / 2 + f.hx, W / 2 - f.hx);
+    f.y = clamp(it.fy * (H / 2), -H / 2 + f.hy, H / 2 - f.hy);
+    f.on = !!it.on;
+  }
+} else defaultLayout();
+host = new Agent({ ...HOST_PROFILE, name: saved ? saved.name : HOST_PROFILE.name }, true);
+host.place(0, H * 0.05);
+eye.z = 32 / CM_PER_UNIT;
+updateHUD();
+requestAnimationFrame(frame);
+
+if (saved) {
+  $('name-input').value = saved.name;
+  $('btn-start').textContent = `Continuar con ${saved.name} (cámara 3D)`;
+  $('btn-start-nocam').textContent = 'Continuar sin cámara';
+  $('btn-new').hidden = false;
+}
+
 async function start(withCam) {
   audio.init();
   await requestSensors();
+  const name = ($('name-input').value || '').trim().slice(0, 14) || 'Nico';
+  host.name = name;
+  if (saved) {
+    money = saved.money ?? 150;
+    born = saved.born || Date.now();
+    lastDay = saved.lastDay || 0;
+    settings.speed = saved.speed || 1;
+    depthK = saved.depth || 1.6;
+    audio.on = saved.sound !== false;
+    if (saved.needs) for (const k of NEED_KEYS) host.needs[k] = saved.needs[k] ?? host.needs[k];
+    // El tiempo pasa mientras no estás (más despacio, y nunca le deja en las últimas)
+    const mins = Math.max(0, (Date.now() - (saved.t || Date.now())) / 60000);
+    if (mins > 2) {
+      for (const k of NEED_KEYS) host.needs[k] = Math.max(Math.min(host.needs[k], 15), host.needs[k] - NEED_INFO[k].decay * 60 * mins * 0.25 * settings.speed);
+      const hrs = mins / 60;
+      setTimeout(() => toast(hrs >= 1 ? `Has estado fuera ${Math.floor(hrs)} h. ${name} te echaba de menos.` : `${name} te estaba esperando.`, 4000), 1500);
+    }
+  }
+  const today = Math.floor(Date.now() / 86400000);
+  if (lastDay && today > lastDay) { earn(40); setTimeout(() => { toast('☀️ ¡Nuevo día! Paga diaria: +40◎'); audio.cash(true); }, 5000); }
+  lastDay = today;
   $('intro').hidden = true;
-  $('hud').hidden = false;
   running = true;
+  resize();
+  syncSettingsUI();
   try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('portrait').catch(() => {}); } catch { /* no disponible */ }
-  tip(isTouch ? 'Inclina el móvil · toca al humano · mantén para cogerlo · arrastra los muebles' : 'Flechas: inclinar · clic: tocar · mantén y arrastra para coger · arrastra los muebles', 6000);
-  setTimeout(() => { say('¿Hola? ¿Hay alguien ahí?', 2.2); audio.voice('happy'); }, 900);
+  tip(isTouch ? 'Toca un objeto para darle órdenes · toca al humano · mantén para cogerlo · inclina el móvil' : 'Clic en objetos para darle órdenes · flechas: inclinar · mantén y arrastra para coger', 6500);
+  setTimeout(() => { host.say(saved ? `¡Hola otra vez!` : '¿Hola? ¿Hay alguien ahí?', 2.2); host.voice('happy'); }, 900);
   if (withCam) startFace();
+  setEyeDot();
+  updateHUD();
+  save();
+}
+
+function syncSettingsUI() {
+  $('btn-depth').textContent = `Efecto 3D: ×${depthK}`;
+  $('btn-sound').textContent = `Sonido: ${audio.on ? 'SÍ' : 'NO'}`;
+  $('btn-speed').textContent = `Ritmo de vida: ${settings.speed === 1 ? 'Normal' : settings.speed === 3 ? 'Rápido' : 'Lento'}`;
   setEyeDot();
 }
 
 $('btn-start').addEventListener('click', () => start(true));
 $('btn-start-nocam').addEventListener('click', () => start(false));
+$('btn-new').addEventListener('click', () => {
+  if (!confirm('¿Empezar una partida nueva? Se perderá la actual.')) return;
+  try { localStorage.removeItem(SAVE_KEY); } catch { /* nada */ }
+  location.reload();
+});
+$('btn-shop').addEventListener('click', () => { audio.init(); closeMenu(); buildShop(); $('shop').hidden = false; audio.menu(); });
+$('shop-close').addEventListener('click', () => { $('shop').hidden = true; });
+$('btn-menu').addEventListener('click', () => { audio.init(); closeMenu(); syncSettingsUI(); $('settings').hidden = false; audio.menu(); });
+$('settings-close').addEventListener('click', () => { $('settings').hidden = true; save(); });
 $('btn-eyes').addEventListener('click', () => { if (face.enabled) stopFace(); else startFace(); });
-$('btn-level').addEventListener('click', () => { recalibrate(); tip('Nivelado: esta posición es ahora "plana".', 2000); });
+$('btn-level').addEventListener('click', () => { recalibrate(); $('settings').hidden = true; tip('Nivelado: esta posición es ahora "plana".', 2000); });
 const DEPTHS = [1, 1.6, 2.4];
-$('btn-depth').addEventListener('click', (e) => {
-  depthK = DEPTHS[(DEPTHS.indexOf(depthK) + 1) % DEPTHS.length];
-  e.currentTarget.textContent = `3D ×${depthK}`;
+$('btn-depth').addEventListener('click', () => { depthK = DEPTHS[(DEPTHS.indexOf(depthK) + 1) % DEPTHS.length]; syncSettingsUI(); });
+$('btn-sound').addEventListener('click', () => { audio.on = !audio.on; syncSettingsUI(); });
+$('btn-speed').addEventListener('click', () => { settings.speed = settings.speed === 1 ? 3 : settings.speed === 3 ? 0.5 : 1; syncSettingsUI(); });
+$('btn-reset').addEventListener('click', () => {
+  if (!confirm('¿Borrar la partida y empezar de cero?')) return;
+  running = false;
+  try { localStorage.removeItem(SAVE_KEY); } catch { /* nada */ }
+  location.reload();
 });
-$('btn-sound').addEventListener('click', (e) => {
-  audio.on = !audio.on;
-  e.currentTarget.classList.toggle('on', audio.on);
-});
-document.addEventListener('visibilitychange', () => { if (!document.hidden) last = performance.now(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) save(); else last = performance.now(); });
+window.addEventListener('pagehide', save);
 
 // Para depurar desde la consola
-window.__room = { human, furn, tilt, sensor, eye, face, setState, setLamp };
+window.__room = { project: (x, y, z) => { const v = new THREE.Vector3(x, y, z).project(camera); return [viewRect.left + (v.x * 0.5 + 0.5) * viewRect.width, viewRect.top + (-v.y * 0.5 + 0.5) * viewRect.height]; }, get host() { return host; }, agents, furn, tilt, sensor, eye, face, DEFS, get money() { return money; }, set money(v) { money = v; }, spawnVisitor, PROFILES, visit, puddles, addFurn, settings };
