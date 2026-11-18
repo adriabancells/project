@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1d2b4a">
+  <title>Atrapado</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --panel: #1d2b4a; --panel2: #2a3d66; --hi: #6f8fd0; --lo: #0d1528; --text: #f4ecd2; --gold: #ffd75a; --ink: #241c14;
+      --font: "VT323", ui-monospace, "Courier New", monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%; overflow: hidden; background: #2b2433; color: var(--text); font-family: var(--font);
+      -webkit-tap-highlight-color: transparent; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    }
+    canvas { display: block; position: fixed; left: 0; width: 100%; image-rendering: pixelated; image-rendering: crisp-edges; }
+    canvas.shake { animation: shake .28s linear; }
+    @keyframes shake { 0%,100% { transform: translate(0,0); } 25% { transform: translate(-4px,2px); } 50% { transform: translate(4px,-2px); } 75% { transform: translate(-2px,1px); } }
+
+    /* Paneles con bisel, estilo de interfaz de los 90 */
+    .bevel { background: var(--panel); border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); box-shadow: 0 0 0 2px #000; }
+    button { font: inherit; cursor: pointer; }
+    .rbtn { font-family: var(--font); font-size: 20px; line-height: 1; color: var(--text); padding: 6px 10px; background: var(--panel2);
+      border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); border-radius: 0; }
+    .rbtn:active { border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+    .rbtn:disabled { opacity: .45; }
+    .rbtn.gold { background: #8a5a12; color: var(--gold); }
+
+    #topbar { position: fixed; z-index: 6; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 6px;
+      padding: calc(env(safe-area-inset-top) + 5px) 8px 5px; font-size: 21px; line-height: 1; }
+    #topbar .rbtn { padding: 6px 8px; }
+    #topbar .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    #hud-name { color: var(--gold); font-size: 23px; }
+    #hud-mood { font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #hud-day { font-size: 16px; color: #b9c4e0; margin-left: 8px; }
+    #hud-money { color: var(--gold); font-size: 22px; padding: 3px 6px; background: var(--lo); border: 2px solid #000; white-space: nowrap; }
+
+    #panel { position: fixed; z-index: 6; left: 0; right: 0; bottom: 0; padding: 6px 8px calc(env(safe-area-inset-bottom) + 6px); }
+    #needs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px 8px; }
+    .need { display: flex; flex-direction: column; gap: 2px; font-size: 17px; line-height: 1; }
+    .need .nl { white-space: nowrap; overflow: hidden; }
+    .need i { font-style: normal; font-size: 13px; margin-right: 3px; }
+    .need .bar { height: 10px; background: var(--lo); border: 2px solid #000; position: relative; }
+    .need .bar b { position: absolute; left: 0; top: 0; bottom: 0; width: 50%; background: #5fd35f;
+      background-image: linear-gradient(90deg, transparent 0 75%, rgba(0,0,0,.25) 75%); background-size: 6px 100%; }
+    .need.alert .bar { animation: blink .6s steps(2) infinite; }
+    @keyframes blink { 50% { border-color: #ff4d3a; } }
+
+    .bubble { position: fixed; z-index: 4; left: 0; top: 0; padding: 3px 8px 4px; background: #fffbe8; color: var(--ink); border: 2px solid #000;
+      font-size: 19px; line-height: 1; white-space: nowrap; pointer-events: none; opacity: 0; will-change: transform; box-shadow: 3px 3px 0 rgba(0,0,0,.35); }
+    .bubble::after { content: ""; position: absolute; left: 50%; bottom: -8px; margin-left: -4px; border: 4px solid transparent; border-top-color: #000; border-left-color: #000; }
+    .bubble.thought { border-radius: 14px; }
+    .bubble.thought::after { width: 6px; height: 6px; border: 2px solid #000; background: #fffbe8; border-radius: 50%; bottom: -10px; }
+    .bubble.show { opacity: 1; }
+
+    #actmenu { position: fixed; z-index: 31; min-width: 200px; max-width: 86vw; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+    #actmenu[hidden] { display: none; }
+    #actmenu .mtitle { font-size: 22px; color: var(--gold); padding: 2px 4px 4px; border-bottom: 2px solid var(--lo); margin-bottom: 2px; }
+    #actmenu button { font-family: var(--font); font-size: 21px; text-align: left; color: var(--text); padding: 6px 10px; background: var(--panel2);
+      border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
+    #actmenu button:active { border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+    #actmenu button:disabled { opacity: .45; }
+    #actmenu button.minor { font-size: 18px; background: #22304f; color: #b9c4e0; }
+
+    .modal { position: fixed; z-index: 30; inset: 0; display: flex; align-items: center; justify-content: center; padding: 14px; background: rgba(10,8,20,.55); }
+    .modal[hidden] { display: none; }
+    .modal .win { width: 100%; max-width: 400px; max-height: 88vh; display: flex; flex-direction: column; }
+    .win .tbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 4px 10px; background: linear-gradient(90deg, #4058a0, #2a3d66); font-size: 24px; color: var(--gold); }
+    .win .tbar button { font-family: var(--font); font-size: 20px; width: 34px; height: 30px; padding: 0; color: var(--text); background: var(--panel2);
+      border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
+    .win .body { padding: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .item { display: flex; align-items: center; gap: 8px; padding: 6px; background: #22304f; border: 2px solid var(--lo); }
+    .item .ic { font-size: 26px; width: 34px; text-align: center; }
+    .item .nm { flex: 1; font-size: 21px; line-height: 1; }
+    .item small { color: #b9c4e0; font-size: 16px; }
+    .item .ds { display: block; margin-top: 2px; }
+    .item button { font-family: var(--font); font-size: 21px; min-width: 70px; color: var(--gold); background: #8a5a12; padding: 6px 8px;
+      border: 3px solid; border-color: #d6a04a #3a2408 #3a2408 #d6a04a; }
+    .item button:disabled { opacity: .4; }
+    #settings .body .rbtn { width: 100%; text-align: left; }
+    #shop-tabs { display: flex; flex-wrap: wrap; gap: 3px; padding: 6px 8px 0; }
+    .tab { font-family: var(--font); font-size: 18px; padding: 4px 7px; color: #b9c4e0; background: #22304f; border: 2px solid var(--lo); }
+    .tab.sel { color: var(--gold); background: #3a4f80; border-color: var(--hi) var(--lo) var(--panel2) var(--hi); }
+    .pvbox { display: flex; justify-content: center; padding: 6px 0 2px; background: #22304f; border-bottom: 2px solid var(--lo); }
+    #preview { position: static; width: 132px; height: 132px; image-rendering: pixelated; border: 3px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+    .wtabs { display: flex; gap: 3px; }
+    .wsec { font-size: 19px; color: var(--gold); margin-top: 4px; }
+    .wrow { display: flex; flex-wrap: wrap; gap: 4px; }
+    .wopt { font-family: var(--font); font-size: 18px; padding: 4px 8px; color: var(--text); background: var(--panel2); border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
+    .wopt.sel { color: var(--gold); background: #4a5f90; border-color: var(--lo) var(--hi) var(--hi) var(--lo); }
+    .wopt:disabled { opacity: .4; }
+    .sw { width: 30px; height: 26px; border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); padding: 0; }
+    .sw.sel { outline: 3px solid var(--gold); outline-offset: 1px; }
+    #pets { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; padding-top: 4px; border-top: 2px solid var(--lo); }
+    #pets[hidden] { display: none; }
+    .petrow { display: grid; grid-template-columns: 1.3fr auto 1fr auto 1fr; align-items: center; gap: 5px; font-size: 17px; line-height: 1; }
+    .petrow .pn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--gold); }
+    .petrow .pl { font-size: 12px; }
+    .petrow .bar { height: 9px; background: var(--lo); border: 2px solid #000; position: relative; }
+    .petrow .bar b { position: absolute; left: 0; top: 0; bottom: 0; width: 50%; background: #5fd35f; }
+    #clipbar { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; padding-bottom: 5px; border-bottom: 2px solid var(--lo); font-size: 19px; line-height: 1; position: relative; flex-wrap: wrap; }
+    #clipbar .rbtn { font-size: 18px; padding: 4px 8px; }
+    #clipbar .cbi { white-space: nowrap; }
+    #clipbar .cbi b { font-weight: normal; color: var(--gold); }
+    #clipbar .goalbar { position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; background: transparent; }
+    #clipbar .goalbar b { display: block; height: 100%; width: 0; background: var(--gold); }
+    .fstats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .fstats div { background: #22304f; border: 2px solid var(--lo); padding: 5px 6px; }
+    .fstats b { display: block; font-weight: normal; font-size: 24px; color: var(--gold); line-height: 1; }
+    .fstats small { font-size: 15px; color: #b9c4e0; }
+    .fnote { margin: 0; font-size: 16px; line-height: 1.1; color: #b9c4e0; }
+    .fsec { font-size: 19px; color: var(--gold); margin-top: 4px; }
+    .frow { display: flex; flex-wrap: wrap; gap: 4px; }
+    .frow button { flex: 1; font-family: var(--font); font-size: 18px; padding: 6px 6px; color: var(--text); background: var(--panel2); border: 3px solid; border-color: var(--hi) var(--lo) var(--lo) var(--hi); }
+    .frow button:disabled { opacity: .4; }
+    .mile { display: flex; flex-direction: column; gap: 3px; padding: 4px 6px; background: #22304f; border: 2px solid var(--lo); font-size: 18px; line-height: 1; }
+    .mile small { display: block; font-size: 15px; color: #b9c4e0; margin-top: 2px; }
+    .mile.done { color: #9ff09f; opacity: .8; }
+    .mile .bar { height: 8px; background: var(--lo); border: 2px solid #000; position: relative; }
+    .mile .bar b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--gold); }
+    .floaty { position: fixed; z-index: 4; transform: translate(-50%, -100%); font-size: 18px; color: var(--gold); text-shadow: 2px 2px 0 #000; pointer-events: none; white-space: nowrap; animation: floaty 1.3s steps(8) forwards; }
+    @keyframes floaty { from { opacity: 1; margin-top: 0; } to { opacity: 0; margin-top: -36px; } }
+    .stars { text-align: center; font-size: 48px; color: var(--gold); text-shadow: 3px 3px 0 #000; }
+    #win-body p { margin: 0; font-size: 19px; line-height: 1.15; }
+    #rotate { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; background: #1d2b4a; }
+    #rotate[hidden] { display: none; }
+    #rotate p { margin: 0; font-size: 30px; color: var(--text); }
+    #rotate b { color: var(--gold); font-weight: normal; }
+    #rotate small { font-size: 18px; color: #b9c4e0; max-width: 320px; }
+    #rotate .phone { width: 46px; height: 80px; border: 5px solid var(--gold); border-radius: 8px; animation: turn 2s ease-in-out infinite; }
+    @keyframes turn { 0%, 30% { transform: rotate(-90deg); } 60%, 100% { transform: rotate(0deg); } }
+    #actmenu .msub { font-size: 16px; color: #b9c4e0; padding: 0 4px 2px; }
+
+    #toast { position: fixed; z-index: 8; left: 50%; top: 64px; transform: translate(-50%, -12px); max-width: calc(100% - 24px); padding: 6px 12px;
+      font-size: 20px; line-height: 1.05; text-align: center; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+    #toast.show { opacity: 1; transform: translate(-50%, 0); }
+    #tip { position: fixed; z-index: 5; left: 50%; bottom: 96px; transform: translateX(-50%); width: calc(100% - 28px); max-width: 380px; padding: 6px 10px;
+      font-size: 18px; line-height: 1.1; text-align: center; pointer-events: none; transition: opacity .8s; }
+    #tip.hide { opacity: 0; }
+    .ripple { position: fixed; z-index: 3; width: 44px; height: 44px; margin: -22px 0 0 -22px; pointer-events: none; border: 3px dashed rgba(255,215,90,.9); animation: ripple .45s steps(5) forwards; }
+    @keyframes ripple { from { transform: scale(.2); opacity: 1; } to { transform: scale(1); opacity: 0; } }
+
+    .dot { display: inline-block; width: 9px; height: 9px; background: #6a6a7a; border: 1px solid #000; margin-right: 6px; vertical-align: 1px; }
+    .dot.on { background: #e6c84a; } .dot.load { background: #e6984a; } .dot.track { background: #5fd35f; box-shadow: 0 0 6px #5fd35f; }
+
+    #intro { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 14px; overflow-y: auto;
+      background: rgba(20,14,30,.72); }
+    #intro[hidden] { display: none; }
+    #intro .win { max-width: 390px; }
+    #intro h1 { margin: 0; font-weight: normal; font-size: 46px; color: var(--gold); text-shadow: 3px 3px 0 #000; text-align: center; letter-spacing: 1px; }
+    #intro .sub { text-align: center; font-size: 20px; color: #b9c4e0; margin: -2px 0 6px; }
+    #intro p { margin: 0; font-size: 19px; line-height: 1.1; }
+    #intro ul { margin: 0; padding-left: 18px; font-size: 18px; line-height: 1.1; color: #dfe6f6; }
+    #intro li { margin-bottom: 3px; }
+    #intro b { color: var(--gold); font-weight: normal; }
+    #intro label { font-size: 20px; }
+    #name-input { width: 100%; margin-top: 4px; font-family: var(--font); font-size: 24px; padding: 6px 8px; color: var(--ink); background: #fffbe8; border: 3px solid; border-color: var(--lo) var(--hi) var(--hi) var(--lo); border-radius: 0; }
+    #intro .rbtn { width: 100%; padding: 10px; font-size: 22px; }
+    #intro .small { font-size: 15px; color: #9aa6c4; text-align: center; }
+    #intro a { color: #9aa6c4; font-size: 16px; text-align: center; }
+
+    #cam { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: 0; top: 0; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="topbar" class="bevel">
+    <div class="who">
+      <span style="white-space:nowrap;overflow:hidden"><span id="hud-name">Nico</span><span id="hud-day">Día 1</span></span>
+      <span id="hud-mood">☺ Bien</span>
+    </div>
+    <span id="hud-money">◎ 150</span>
+    <button id="btn-shop" class="rbtn gold">Tienda</button>
+    <button id="btn-menu" class="rbtn" aria-label="Opciones"><span class="dot" id="eye-dot"></span>☰</button>
+  </div>
+
+  <canvas id="view"></canvas>
+
+  <div id="panel" class="bevel">
+    <div id="clipbar">
+      <button id="btn-factory" class="rbtn gold">Fábrica</button>
+      <span class="cbi" title="Clips fabricados">📎 <b id="cb-clips">0</b></span>
+      <span class="cbi" title="Producción">⚙ <b id="cb-rate">0/s</b></span>
+      <span class="cbi" title="Alambre">🧵 <b id="cb-wire">0</b></span>
+      <span class="cbi" title="Eficiencia según el ánimo">☺ <b id="cb-eff">0%</b></span>
+      <span class="goalbar"><b id="cb-goal"></b></span>
+    </div>
+    <div id="needs"></div><div id="pets" hidden></div></div>
+
+  <div id="actmenu" class="bevel" hidden></div>
+  <div id="toast" class="bevel"></div>
+  <div id="tip" class="bevel hide"></div>
+  <video id="cam" playsinline muted></video>
+
+  <div id="shop" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span>Catálogo · <span id="shop-money">◎ 0</span></span><button id="shop-close">✕</button></div>
+      <div id="shop-tabs"></div>
+      <div class="body" id="shop-list"></div>
+    </div>
+  </div>
+
+  <div id="wardrobe" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span><span id="wardrobe-title">Armario</span> · <span id="wardrobe-money">◎ 0</span></span><button id="wardrobe-close">✕</button></div>
+      <div class="pvbox"><canvas id="preview" width="96" height="96"></canvas></div>
+      <div class="body" id="wardrobe-body"></div>
+    </div>
+  </div>
+
+  <div id="factory" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span>Fábrica de clips · <span id="factory-money">◎ 0</span></span><button id="factory-close">✕</button></div>
+      <div class="body" id="factory-body"></div>
+    </div>
+  </div>
+
+  <div id="win" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span>¡Objetivo cumplido!</span><button id="win-close">✕</button></div>
+      <div class="body" id="win-body"></div>
+    </div>
+  </div>
+
+  <div id="rotate" hidden>
+    <div class="phone"></div>
+    <p>Gira el móvil en <b>vertical</b></p>
+    <small>Este juego solo funciona con el móvil en posición vertical. La partida está en pausa.</small>
+  </div>
+
+  <div id="settings" class="modal" hidden>
+    <div class="win bevel">
+      <div class="tbar"><span>Opciones</span><button id="settings-close">✕</button></div>
+      <div class="body">
+        <button id="btn-eyes" class="rbtn">Seguir ojos</button>
+        <p style="margin:0 2px;font-size:16px;color:#b9c4e0"><span class="dot" id="eye-dot2"></span>Verde: te está viendo por la cámara frontal.</p>
+        <button id="btn-depth" class="rbtn">Efecto 3D</button>
+        <button id="btn-looks" class="rbtn">Cambiar apariencia</button>
+        <button id="btn-level" class="rbtn">Nivelar el móvil</button>
+        <button id="btn-sound" class="rbtn">Sonido</button>
+        <button id="btn-speed" class="rbtn">Ritmo de vida</button>
+        <button id="btn-reset" class="rbtn" style="color:#ff9f8f">Borrar partida</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="intro">
+    <div class="win bevel">
+      <div class="body" style="gap:10px">
+        <h1>ATRAPADO</h1>
+        <div class="sub">una vida entera dentro de tu móvil</div>
+        <p>Alguien vive debajo del cristal de tu pantalla. Tiene hambre, sueño, ganas de jugar… y te necesita.</p>
+        <ul>
+          <li><b>Toca un objeto</b> para mandarle hacer algo: comer, dormir, ducharse, trabajar…</li>
+          <li>Gana <b>monedas ◎</b> trabajando en el ordenador y <b>compra</b> muebles nuevos.</li>
+          <li>Tócalo para hacerle cosquillas; mantén para cogerlo. Inclina el móvil: todo resbala.</li>
+          <li>Cámbiale la <b>ropa</b> en el armario y adopta <b>mascotas</b>.</li>
+          <li>De vez en cuando <b>llaman a la puerta</b>.</li>
+          <li><b>El objetivo:</b> fabricar <b>10 millones de clips</b>. La fábrica rinde según lo feliz que esté. Vende clips para comprar cosas, pero no descuides a tu humano.</li>
+          <li>Juega con el móvil en <b>vertical</b>.</li>
+        </ul>
+        <label>Nombre de tu humano<input id="name-input" maxlength="14" placeholder="Nico" autocomplete="off"></label>
+        <button id="btn-looks-intro" class="rbtn" style="font-size:19px">Personalizar su aspecto</button>
+        <button id="btn-start" class="rbtn gold">Empezar (con cámara 3D)</button>
+        <button id="btn-start-nocam" class="rbtn">Empezar sin cámara</button>
+        <button id="btn-new" class="rbtn" hidden style="font-size:18px">Partida nueva</button>
+        <p class="small">La cámara frontal sigue tus ojos para dar profundidad. La imagen se procesa solo en tu móvil.</p>
+        <a href="index.html">← Otros experimentos</a>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="habitacion.js?v=5"></script>
+</body>
+</html>

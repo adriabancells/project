@@ -1,3 +1,36 @@
+# Atrapado (`habitacion.html`)
+
+Un pequeño simulador de vida retro **dentro de la pantalla del móvil**: la pantalla es el cristal de una habitación que se ve desde arriba, con profundidad 3D real. Gráficos de píxel gordo con paleta reducida y tramado, interfaz de paneles biselados al estilo de los juegos de los 90.
+
+**Objetivo: la fábrica de clips (juego incremental)**
+- La meta es fabricar **10 millones de clips**. Los clips no son la moneda: son el objetivo. Se pueden **vender** (a un precio que fluctúa y baja si inundas el mercado) para conseguir monedas ◎ con las que comprar cosas.
+- Se fabrican a mano en la **Mesa de clips** y con máquinas que se van desbloqueando: **Máquina de clips**, **Máquina industrial** y **Robot clipero**. Cada clip gasta alambre, que se compra por bobinas a precio variable.
+- **La producción depende del ánimo del humano**: con buen ánimo la fábrica va al 100% (o más); si está mal, apenas produce. Mientras duerme, las máquinas van a medio gas. Las máquinas hacen **ruido** que le cansa y le aburre, y se **atascan** más si está desanimado (hay que mandarle a revisarlas). Puedes pararlas para que descanse. Para compensar hay objetos de **lujo** (cama de lujo, jacuzzi, sillón de masaje).
+- **Mejoras** (doblado rápido, bobinas largas, aceite, publicidad, compra de alambre y venta automáticas, insonorización, engranajes de titanio, turnos automáticos, inteligencia clipificial…) y **8 hitos** con premios. Al llegar a la meta, la puntuación (1 a 3 estrellas) depende del ánimo medio durante la partida.
+- Las máquinas siguen produciendo (a medio gas, hasta 8 h) mientras no juegas.
+- Solo se juega con el móvil en **vertical**: en horizontal aparece un aviso y la partida se pausa.
+
+**Cuidar al humano (tipo Tamagotchi)**
+- Seis necesidades que bajan con el tiempo: **Hambre, Energía, Diversión, Higiene, Vejiga y Social**. El ánimo general sale de ellas.
+- **Toca cualquier objeto** para ver qué puede hacer con él: comer de la nevera (y sentarse a la mesa con el plato), dormir o echar la siesta, ducharse, ir al váter, trabajar o jugar en el ordenador, ver la tele, bailar, jugar a la pelota, leer, mirar los peces… También puedes girar o vender el objeto.
+- Si no le dices nada, decide solo según lo que más necesita. Si lo descuidas: se queja, huele (rayitas verdes), se duerme en el suelo, puede tener un "accidente" (toca el charco para limpiarlo) y se niega a trabajar si está de muy mal humor.
+- **Dinero ◎**: trabajando en el ordenador, con regalos de las visitas y una paga diaria. La comida cuesta dinero.
+- **Tienda** por secciones (Casa, Ocio, Cocina/baño, Deco, Mascotas, Ropa), con unos 35 objetos: tele, sofá, butaca, armario, teléfono (pedir pizza a domicilio o llamar a un amigo para que venga), cocina (cocinar comida mejor… o quemarla), cafetera, bañera, lavabo con espejo, piano, guitarra, caballete (pintar cuadros y venderlos), recreativa, telescopio (¿un ovni?), cinta de correr, equipo de música, pelota, pecera, estantería… La decoración (reloj de pie, estatua, flamenco, lámpara de lava, plantas) da **ambiente**: sube el ánimo y hace que se aburra menos.
+- **Ropa**: en el armario eliges parte de arriba (camiseta, tirantes, sudadera, vestido, traje), colores, pantalón, peinado y color de pelo, piel y accesorios (lazo, gorra, gafas de sol, auriculares, chistera, corona). Las prendas especiales se compran una vez y quedan desbloqueadas.
+- **Apariencia** (pestaña *Cara y cuerpo* del armario, también desde Opciones o desde la pantalla de inicio), con vista previa en primer plano: 11 peinados (corto, largo, moño, coleta, coletas, rizado, afro, de punta, cresta, cepillo, rapado) y color de pelo, 7 tipos de ojos y color de ojos, cejas, nariz, boca, vello facial (bigote, perilla, barba, barba de 3 días), colorete y pecas, color de piel y altura. Las visitas también llegan con caras variadas.
+- **Mascotas**: perro, gato y conejo (hasta 3), cada uno con su nombre y pelaje. Tienen hambre, cariño y sueño: comen del comedero (que hay que llenar), duermen en su cama (los gatos suben a la cama o al sofá), persiguen la pelota, el gato usa el rascador, te piden mimos y hacen caca (toca para limpiarla, o la limpia tu humano). Tu humano las acaricia y juega con ellas solo o cuando se lo pides; los perros ladran cuando llaman a la puerta. También resbalan al inclinar el móvil y se pueden coger con el dedo.
+- **Visitas**: de vez en cuando suena el timbre, se abre la puerta y entra alguien (cada visita tiene su aspecto y su voz). Charlan, usan tus cosas (¡y se comen tu comida!) y se van. Si apesta o si lanzas a la visita por los aires, se va antes.
+- La partida se guarda en el móvil; mientras no estás, el tiempo pasa más despacio y nunca lo deja en las últimas. Opción de ritmo de vida lento / normal / rápido.
+
+**Física y 3D**
+- **Inclinación del móvil** → todo resbala; el humano se inclina, tropieza y se cae. Sacudir el móvil = terremoto. *Nivelar* fija la posición actual como "plana".
+- **Seguimiento de ojos** (cámara frontal + MediaPipe Face Landmarker) con **proyección off-axis**: la pantalla se comporta como una ventana real. Además, si te ve, te saluda y su necesidad social sube.
+- Con el dedo: tocar al humano = cosquillas; mantener = cogerlo y lanzarlo; arrastrar muebles; tocar el suelo para que vaya; mantener el dedo en el suelo para que venga a tocarlo.
+
+En el ordenador: clic en los objetos, flechas para inclinar y ratón para la perspectiva. Ficheros: `habitacion.html` + `habitacion.js` (Three.js y MediaPipe desde CDN). Hace falta HTTPS para la cámara y los sensores.
+
+---
+
 # Sintetitzador AR
 
 Instrument electrònic que es toca **movent les mans a l'aire davant la càmera** (qualsevol mòbil o ordinador amb càmera). El so es visualitza com a ones de neó que vibren entre els dits.
